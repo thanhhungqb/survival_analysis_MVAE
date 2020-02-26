@@ -113,8 +113,10 @@ def data_transform(df, eps=0.01):
     df.loc[:, 'Non-smoking year'] = np.where(df['Non-smoking year'] > 0, df['Non-smoking year'], n_n)
 
     # convert age to continue
-    df.loc[:, 'Age at diagnosis'] = survival_time_norm(df['Age at diagnosis'])
-    df.loc[:, 'Survival'] = survival_time_norm(df['Survival'])
+    # df.loc[:, 'Age at diagnosis'] = survival_time_norm(df['Age at diagnosis'])
+    df.loc[:, 'Age at diagnosis'] = df['Age at diagnosis'] / 365
+    # df.loc[:, 'Survival'] = survival_time_norm(df['Survival'])
+    df.loc[:, 'Survival'] = df['Survival'] / 365
 
     # for IA, IB, ... to 1A, 1B, 2A, ...
     lst1 = [('IA', '1A'), ('IB', '1B'), ('IIA', '2A'), ('IIB', '2B'),
@@ -131,6 +133,7 @@ def data_transform(df, eps=0.01):
 
     # add more field
     df['delay_test'] = df['Last Order Date1'] - df['Cancer Diagnosis']
+    df.loc[:, 'x(days)'] = df['x(days)'] / 365
 
     return df
 
