@@ -79,7 +79,7 @@ def cnuh_data_transform(data, header=None, selected_header=None):
 
     if selected_header is None:
         selected_header = selected_header_en
-    data.columns = header
+    data.columns = header + list(data.columns)[len(header):]
     data = data[selected_header]
 
     df = data_preprocessing(data)
