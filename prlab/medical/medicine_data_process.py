@@ -120,9 +120,9 @@ def data_transform(df, eps=0.01):
     lst1 = [('IA', '1A'), ('IB', '1B'), ('IIA', '2A'), ('IIB', '2B'),
             ('IIIA', '3A'), ('IIIB', '3B'), ('IVA', '4A'), ('IVB', '4B')]
 
-    for (xr, xn) in lst1:
-        df['Final weapon 1'].replace(xr, xn, inplace=True)
-    df['Final weapon 1'] = 'S-' + df['Final weapon 1']
+    # for (xr, xn) in lst1:
+    #     df['Final weapon 1'].replace(xr, xn, inplace=True)
+    # df['Final weapon 1'] = 'S-' + df['Final weapon 1']
 
     return data_normalize(df)
 
