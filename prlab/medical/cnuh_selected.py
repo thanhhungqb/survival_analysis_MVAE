@@ -61,7 +61,7 @@ cnuh_map_name = {header_en[i]: header_kr[i] for i in range(len(header_kr))}
 selected_header_en = [
     'M-code1', 'T / N / M weapon 1', 'Cancer Diagnosis', 'gender', 'Age at diagnosis',
     'Last Order Date1', 'Smoking', 'Daily amount of smoking (A)', 'Smoking period (years)', 'Smoking total (rel)',
-    'Non-smoking year', 'Survival', 'x(days)']
+    'Non-smoking year', 'Survival', 'x(days)', 'delay_test']
 selected_header_kr = [
     'M-code(조직형)', 'T/N/M병기', '성별', '중증등록일', '진단시나이(진단시 생존일수)', '최종병기날짜',
     '흡연력', '하루흡연량(갑)', '흡연기간(년)', '흡연갑년', '금연한 연도', '생존일수', 'x(days)']
@@ -80,12 +80,12 @@ def cnuh_data_transform(data, header=None, selected_header=None):
     if selected_header is None:
         selected_header = selected_header_en
     data.columns = header + list(data.columns)[len(header):]
-    data = data[selected_header]
 
     df = data_preprocessing(data)
     df = data_transform(df)
     df = data_filter(df)
-    # df
+
+    df = df[selected_header]
 
     # df['Survival_1'] = df['Survival'] - df['Age at diagnosis']
     return df
