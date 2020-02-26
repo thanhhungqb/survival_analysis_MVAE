@@ -79,8 +79,8 @@ def data_normalize(df, eps=0.01):
     """
     some normalize step
     """
-    df['Cancer Diagnosis'] = to_continue_d(df['Cancer Diagnosis'])
-    df['Last Order Date1'] = to_continue_d(df['Last Order Date1'])
+    df.loc[:, 'Cancer Diagnosis'] = to_continue_d(df['Cancer Diagnosis'])
+    df.loc[:, 'Last Order Date1'] = to_continue_d(df['Last Order Date1'])
     return df
 
 
@@ -92,29 +92,29 @@ def data_transform(df, eps=0.01):
     - normalize data columns
     """
     # convert date from yyyymmdd to continue date (from 1970)
-    df['Cancer Diagnosis'] = pd.to_datetime(df['Cancer Diagnosis'], format='%Y%m%d')
-    df['Last Order Date1'] = pd.to_datetime(df['Last Order Date1'], format='%Y%m%d')
+    df.loc[:, 'Cancer Diagnosis'] = pd.to_datetime(df['Cancer Diagnosis'], format='%Y%m%d')
+    df.loc[:, 'Last Order Date1'] = pd.to_datetime(df['Last Order Date1'], format='%Y%m%d')
     # TODO datetime to count days
 
     # convert gender, Smoking to number (0/1)
-    df['gender'] = np.where(df['gender'] == 'M', 0, 1)
-    df['Smoking'] = np.where(df['Smoking'] == 'N', 0, 1)
+    df.loc[:, 'gender'] = np.where(df['gender'] == 'M', 0, 1)
+    df.loc[:, 'Smoking'] = np.where(df['Smoking'] == 'N', 0, 1)
 
     # convert None-smoking year
     # fix this column values
-    df['Non-smoking year'] = x_convert(df['Non-smoking year'])
+    df.loc[:, 'Non-smoking year'] = x_convert(df['Non-smoking year'])
 
     # back several years (some rows)
     tmp_x = df['Cancer Diagnosis'].dt.year.astype('int32') + df['Non-smoking year']
-    df['Non-smoking year'] = np.where(df['Non-smoking year'] >= 0, df['Non-smoking year'], tmp_x)
+    df.loc[:, 'Non-smoking year'] = np.where(df['Non-smoking year'] >= 0, df['Non-smoking year'], tmp_x)
 
     # not stop until cancer
     n_n = df['Cancer Diagnosis'].dt.year.astype('int32') * df['Smoking']
-    df['Non-smoking year'] = np.where(df['Non-smoking year'] > 0, df['Non-smoking year'], n_n)
+    df.loc[:, 'Non-smoking year'] = np.where(df['Non-smoking year'] > 0, df['Non-smoking year'], n_n)
 
     # convert age to continue
-    df['Age at diagnosis'] = survival_time_norm(df['Age at diagnosis'])
-    df['Survival'] = survival_time_norm(df['Survival'])
+    df.loc[:, 'Age at diagnosis'] = survival_time_norm(df['Age at diagnosis'])
+    df.loc[:, 'Survival'] = survival_time_norm(df['Survival'])
 
     # for IA, IB, ... to 1A, 1B, 2A, ...
     lst1 = [('IA', '1A'), ('IB', '1B'), ('IIA', '2A'), ('IIB', '2B'),
@@ -123,7 +123,8 @@ def data_transform(df, eps=0.01):
     # for (xr, xn) in lst1:
     #     df['Final weapon 1'].replace(xr, xn, inplace=True)
     # df['Final weapon 1'] = 'S-' + df['Final weapon 1']
-
+    df.loc[:, 'T / N / M weapon 1'] = np.where(df['T / N / M weapon 1'].str.strip() == '', np.nan,
+                                               df['T / N / M weapon 1'])
     return data_normalize(df)
 
 
