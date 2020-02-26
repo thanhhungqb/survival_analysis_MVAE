@@ -72,7 +72,7 @@ def fix_non_smoking_year(df_col):
 
 
 def to_continue_d(df):
-    return df.dt.year + df.dt.month / 12 + df.dt.day / 12 / 30
+    return df.dt.year + df.dt.month / 12 + df.dt.day / 365
 
 
 def data_normalize(df, eps=0.01):
@@ -125,7 +125,14 @@ def data_transform(df, eps=0.01):
     # df['Final weapon 1'] = 'S-' + df['Final weapon 1']
     df.loc[:, 'T / N / M weapon 1'] = np.where(df['T / N / M weapon 1'].str.strip() == '', np.nan,
                                                df['T / N / M weapon 1'])
-    return data_normalize(df)
+
+    # normalize
+    df = data_normalize(df)
+
+    # add more field
+    df['delay_test'] = df['Last Order Date1'] - df['Cancer Diagnosis']
+
+    return df
 
 
 def x_convert(lst):
