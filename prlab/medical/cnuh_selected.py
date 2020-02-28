@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
-import json
 
 import pandas as pd
 
 from prlab.gutils import constant_map_dict
-from prlab.medical.medicine_data_process import data_filter, data_preprocessing, data_transform
 from prlab.medical.cnuh_constants import *
+from prlab.medical.medicine_data_process import data_filter, data_preprocessing, data_transform
+
 
 def select_data(fname, save_file):
     """
@@ -48,7 +48,7 @@ def select_data(fname, save_file):
     # why some row Survival M < Age at diagnosis
 
 
-with open('config/medicine-data-map.json') as fp:
+with open(MAP_FILE_NAME) as fp:
     jmap = json.load(fp=fp)
     constants = jmap['constants']
     # update based on cnuh_constants
