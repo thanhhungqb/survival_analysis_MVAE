@@ -1,6 +1,7 @@
 import json
 
-with open('config/medicine-data-map.json') as fp:
+MAP_FILE_NAME = 'config/medicine-data-map.json'
+with open(MAP_FILE_NAME) as fp:
     jmap = json.load(fp=fp)
     consts = jmap['constants']
 
