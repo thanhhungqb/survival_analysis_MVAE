@@ -1,7 +1,7 @@
 from fastai.tabular import *
 
 from prlab.gutils import encode_and_bind
-from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C
+from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
 
 keep_m_code_lst = ['m8041/3', 'm8070/3', 'm8140/3']
 
@@ -48,7 +48,7 @@ def make_one_hot_df(**config):
 
     # update cat_names to [] and cont_names to all fields (except fold)
     cont_names = config['df'].select_dtypes(include=[np.number]).columns.tolist()
-    cont_names = [o for o in cont_names if o != config['dep_var']]
+    cont_names = [o for o in cont_names if o not in [SURVIVAL_C, config['dep_var']]]
     cont_names = [o for o in cont_names if o != 'fold']  # remove fold if has
     config['cat_names'], config['cont_names'] = [], cont_names
 
