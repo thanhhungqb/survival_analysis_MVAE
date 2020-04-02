@@ -70,7 +70,7 @@ def data_load_df(**config):
     # cont_names = train_data.select_dtypes(include=[np.number]).columns.tolist()
     cat_names, cont_names = config['cat_names'], config['cont_names']
 
-    procs = [FillMissing, Categorify, Normalize]
+    procs = [FillMissing, Categorify, Normalize][:2]
 
     # Test tabularlist
     test = TabularList.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
@@ -83,7 +83,9 @@ def data_load_df(**config):
             .add_test(test)
             .databunch())
 
-    data_train.show_batch(rows=10)
+    print(data_train.show_batch(rows=10))
+    print(data_train)
+
     config.update({
         'data_train': data_train,
         'data_test': data_test_df
