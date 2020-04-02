@@ -48,6 +48,7 @@ def make_one_hot_df(**config):
 
     # update cat_names to [] and cont_names to all fields (except fold)
     cont_names = config['df'].select_dtypes(include=[np.number]).columns.tolist()
+    cont_names = [o for o in cont_names if o != config['dep_var']]
     cont_names = [o for o in cont_names if o != 'fold']  # remove fold if has
     config['cat_names'], config['cont_names'] = [], cont_names
 
