@@ -1,6 +1,6 @@
 from fastai.tabular import *
 
-from prlab.gutils import encode_and_bind
+from prlab.gutils import encode_and_bind, column_map, clean_str, load_json_text_lines
 from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
 
 keep_m_code_lst = ['m8041/3', 'm8070/3', 'm8140/3']
@@ -44,6 +44,34 @@ def make_one_hot_df(**config):
     :return:
     """
     ndf = encode_and_bind(config['df'], [TNM_CODE_C, M_CODE_C], keep_old=False)
+    config['df'] = ndf
+
+    # update cat_names to [] and cont_names to all fields (except fold)
+    cont_names = config['df'].select_dtypes(include=[np.number]).columns.tolist()
+    cont_names = [o for o in cont_names if o not in [SURVIVAL_C, config['dep_var']]]
+    cont_names = [o for o in cont_names if o != 'fold']  # remove fold if has
+    config['cat_names'], config['cont_names'] = [], cont_names
+
+    return config
+
+
+def make_embedding_df(**config):
+    """
+    from df and load embedding from file, make a new df and cont_names
+    :param config:
+    :return:
+    """
+    df = config['df']
+    df.dropna(inplace=True)
+    map_clean_str_rev = {clean_str(k): k for k in df.columns.tolist()}
+
+    p = config['fold_weight']
+    emb = load_json_text_lines(p)[config['fold']]
+    emb = {map_clean_str_rev[k]: v for k, v in emb.items() if map_clean_str_rev.get(k, None) is not None}
+
+    print('emb keys', emb.keys())
+    lst = [TNM_CODE_C, M_CODE_C]
+    ndf = column_map(config['df'], lst, emb, keep_old=False)
     config['df'] = ndf
 
     # update cat_names to [] and cont_names to all fields (except fold)
