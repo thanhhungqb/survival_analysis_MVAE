@@ -121,3 +121,88 @@ def data_load_df(**config):
     })
 
     return config
+
+
+# ------------- new version of data 2020-05 --------------------------
+# PatientID	gender	age	Survival.time	Mcode
+# Mcode.description	Histology	Overall.stage
+# Clinical.T.Stage	Clinical.N.stage	Clinical.M.stage
+# Smoking.status	Smoking.amount
+# Deadstatus.event
+# PatientWeight	PatientSize
+
+class XConst:
+    GENDER_C = "gender"
+    AGE_AT_DIAGNOSIS_C = "age"
+    M_CODE_C = "Mcode"
+    M_CODE_DESC_C = "Mcode.description"
+    HIS_C = "Histology"
+
+    STAGE_CODE_C = "Overall.stage"
+    T_STAGE_C = "Clinical.T.Stage"
+    N_STAGE_C = "Clinical.N.stage"
+    M_STAGE_C = "Clinical.M.stage"
+
+    SMOKING_C = "Smoking.status"
+    SMOKING_TOTAL_C = 'Smoking.amount'
+
+    DEAD_STATUS_C = "Deadstatus.event"
+    WEIGHT_C = "PatientWeight"
+    SIZE_C = "PatientSize"
+
+    SURVIVAL_C = 'Survival.time'
+
+    DEAD_STATUS_V = 1
+
+
+class SimpleCNUHPreProcessing:
+    _xconst = XConst
+
+    def __init__(self, **config):
+        self.config = config
+
+        self.selected_header = config.get('selected_header', None)
+
+    def __call__(self, **config):
+        df = config['df']
+        df = self.filter_pre(df)
+        df = self.transform(df)
+        df = self.filter_post(df)
+        df = self.keep_header(df)
+
+        config['df'] = df
+        return config
+
+    def filter_pre(self, df):
+        """
+        Filter data before other steps
+        :param df:
+        :return:
+        """
+        return df
+
+    def filter_post(self, df):
+        """
+        filter data frame after other steps
+        :param df:
+        :return:
+        """
+        # remove unsure case
+        df = df[df[self._xconst.WEIGHT_C].notnull()]
+        df = df[df[self._xconst.SIZE_C].notnull()]
+
+        # use alive and discontinue cases?
+        # df = df[df[self._xconst.DEAD_STATUS_C] == self._xconst.DEAD_STATUS_V]
+
+        return df
+
+    def keep_header(self, df):
+        if self.selected_header is not None:
+            df = df[self.selected_header]
+        return df
+
+    def transform(self, df):
+        # gender
+        df.loc[:, self._xconst.GENDER_C] = np.where(df[self._xconst.GENDER_C] == 'male', 0, 1)
+
+        return df
