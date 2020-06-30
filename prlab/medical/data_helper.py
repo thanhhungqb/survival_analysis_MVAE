@@ -156,6 +156,44 @@ class XConst:
     DEAD_STATUS_V = 1
 
 
+class XFilter:
+    """ Some wide used filter for DataFrame input.
+    function form: lambda df: df
+    """
+    HAS_WEIGHT_FILTER = lambda df: df[df[XConst.WEIGHT_C].notnull()]
+    HAS_SIZE_FILTER = lambda df: df[df[XConst.SIZE_C].notnull()]
+    NO_NOTE_FILTER = lambda df: df[df[XConst.NOTE_C].isnull()] if XConst.NOTE_C in list(df.columns) else df
+    ONLY_DEAD_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C] == XConst.DEAD_STATUS_V]
+    COMMON_WEIGHT_SIZE_FILTER = lambda df: XFilter.HAS_SIZE_FILTER(XFilter.HAS_WEIGHT_FILTER(df))
+
+
+class XTransform:
+    """
+    Some common transform functions for DataFrame
+    function form: lambda df: None (modified df itself, does not need consider output)
+    """
+    GENDER_TFS = lambda df: XTransform._modified(df, XConst.GENDER_C, [('male', 0), ('female', 1)])
+
+    @staticmethod
+    def _modified(df, field_name, lst):
+        """
+        Now, just support binary value, then lst has only 2 elements
+        :param df: DataFrame
+        :param field_name:
+        :param lst: [(val, map_val)]
+        :return: new df, replace the field_name with map_vals
+        """
+        assert len(lst) > 0
+        f_el = lst[0]
+        if not isinstance(f_el, tuple):
+            lst = [(o, idx) for idx, o in enumerate(lst)]
+
+        f_el = lst[0]
+        # TODO update in future, now only 0 or 1
+        df.loc[:, field_name] = np.where(df[field_name] == f_el[0], f_el[1], f_el[1] + 1)
+        return df
+
+
 class SimpleCNUHPreProcessing:
     _xconst = XConst
 
@@ -163,6 +201,16 @@ class SimpleCNUHPreProcessing:
         self.config = config
 
         self.selected_header = config.get('selected_header', None)
+        # list of filter function apply to df lambda df: df
+        self.filter_pre_list = config.get('filter_pre_list', [])
+        # list of filter function apply to df lambda df: df
+        self.filter_post_list = config.get('filter_post_list',
+                                           [XFilter.COMMON_WEIGHT_SIZE_FILTER,
+                                            XFilter.NO_NOTE_FILTER,
+                                            XFilter.ONLY_DEAD_FILTER])
+
+        # list of transform
+        self.tfms = config.get('df_transform', [XTransform.GENDER_TFS])
 
     def __call__(self, **config):
         df = config['df']
@@ -180,6 +228,9 @@ class SimpleCNUHPreProcessing:
         :param df:
         :return:
         """
+        for o_filter in self.filter_pre_list:
+            df = o_filter(df)
+
         return df
 
     def filter_post(self, df):
@@ -188,13 +239,10 @@ class SimpleCNUHPreProcessing:
         :param df:
         :return:
         """
-        # remove unsure case
-        df = df[df[self._xconst.WEIGHT_C].notnull()]
-        df = df[df[self._xconst.SIZE_C].notnull()]
-        df = df[df[self._xconst.NOTE_C].isnull()] if self._xconst.NOTE_C in list(df.columns) else df
 
-        # use alive and discontinue cases?
-        # df = df[df[self._xconst.DEAD_STATUS_C] == self._xconst.DEAD_STATUS_V]
+        # other filter in list
+        for o_filter in self.filter_post_list:
+            df = o_filter(df)
 
         return df
 
@@ -204,7 +252,8 @@ class SimpleCNUHPreProcessing:
         return df
 
     def transform(self, df):
-        # gender
-        df.loc[:, self._xconst.GENDER_C] = np.where(df[self._xconst.GENDER_C] == 'male', 0, 1)
+        
+        for tfm in self.tfms:
+            df = tfm(df)
 
         return df
