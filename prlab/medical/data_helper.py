@@ -173,6 +173,7 @@ class XTransform:
     function form: lambda df: None (modified df itself, does not need consider output)
     """
     GENDER_TFS = lambda df: XTransform._modified(df, XConst.GENDER_C, [('male', 0), ('female', 1)])
+    DAY_TO_YEAR_TFS = lambda df: XTransform._apply_fn(df, XConst.SURVIVAL_C, lambda x: x / 365)
 
     @staticmethod
     def _modified(df, field_name, lst):
@@ -193,6 +194,12 @@ class XTransform:
         df.loc[:, field_name] = np.where(df[field_name] == f_el[0], f_el[1], f_el[1] + 1)
         return df
 
+    @staticmethod
+    def _apply_fn(df, field_name, fn):
+        """ apply a function (fn) to transform data in field_name """
+        df[field_name] = df[field_name].transform(fn)
+        return df
+
 
 class SimpleCNUHPreProcessing:
     _xconst = XConst
@@ -210,7 +217,10 @@ class SimpleCNUHPreProcessing:
                                             XFilter.ONLY_DEAD_FILTER])
 
         # list of transform
-        self.tfms = config.get('df_transform', [XTransform.GENDER_TFS])
+        self.tfms = config.get('df_transform', [
+            XTransform.GENDER_TFS,
+            XTransform.DAY_TO_YEAR_TFS
+        ])
 
     def __call__(self, **config):
         df = config['df']
@@ -252,7 +262,7 @@ class SimpleCNUHPreProcessing:
         return df
 
     def transform(self, df):
-        
+
         for tfm in self.tfms:
             df = tfm(df)
 
