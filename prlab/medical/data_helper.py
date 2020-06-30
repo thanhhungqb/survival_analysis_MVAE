@@ -151,6 +151,7 @@ class XConst:
     SIZE_C = "PatientSize"
 
     SURVIVAL_C = 'Survival.time'
+    NOTE_C = 'note'
 
     DEAD_STATUS_V = 1
 
@@ -190,6 +191,7 @@ class SimpleCNUHPreProcessing:
         # remove unsure case
         df = df[df[self._xconst.WEIGHT_C].notnull()]
         df = df[df[self._xconst.SIZE_C].notnull()]
+        df = df[df[self._xconst.NOTE_C].isnull()] if self._xconst.NOTE_C in list(df.columns) else df
 
         # use alive and discontinue cases?
         # df = df[df[self._xconst.DEAD_STATUS_C] == self._xconst.DEAD_STATUS_V]
