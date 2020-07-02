@@ -1,3 +1,4 @@
+import deprecation
 from fastai.tabular import *
 
 from prlab.gutils import encode_and_bind, column_map, clean_str, load_json_text_lines
@@ -83,6 +84,7 @@ def make_embedding_df(**config):
     return config
 
 
+@deprecation.deprecated(details='consider to use data_load_df_general. Note, difference of data_test type')
 def data_load_df(**config):
     """
     Follow Pipeline Process template in `prlab.fastai.pipeline.pipeline_control_multi`.
