@@ -123,6 +123,66 @@ def data_load_df(**config):
     return config
 
 
+def data_load_df_general(**config):
+    """
+    Follow Pipeline Process template in `prlab.fastai.pipeline.pipeline_control_multi`.
+    Old name: data_load_dfv2
+    Make a data_train, data_test and add to config
+    :param config:
+    :return: new config
+    """
+    df = config['df']
+    data_train_df = df[df['fold'] != config['test_fold']].copy()
+    data_test_df = df[df['fold'] == config['test_fold']].copy()
+
+    cat_names_default = data_train_df.select_dtypes(include=['object']).columns.tolist()
+    cont_names_default = data_train_df.select_dtypes(include=[np.number]).columns.tolist()
+    cat_names, cont_names = config.get('cat_names', cat_names_default), config.get('cont_names', cont_names_default)
+
+    procs_default = [FillMissing, Categorify, Normalize][:2]
+    procs = config.get('procs', procs_default)
+
+    # Test
+    test = TabularList.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
+
+    # label_cls infer from the type of config['dep_var']
+    lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (np.int64, np.int, int)) else CategoryList
+    label_from_df_params = {'cols': config['dep_var'], 'label_cls': lbl_cls}
+    if label_from_df_params['label_cls'] == FloatList:
+        label_from_df_params['log'] = config['is_log']
+
+    # Train data bunch
+    data_train = (
+        TabularList.from_df(data_train_df, path=config['path'],
+                            cat_names=cat_names, cont_names=cont_names,
+                            procs=procs)
+            .split_by_rand_pct(valid_pct=0.1, seed=config.get('seed', 43))
+            .label_from_df(**label_from_df_params)
+            .add_test(test)
+            .databunch())
+
+    def fn(idx, **kwargs):
+        return idx in data_test_df.index
+
+    data_test = (
+        TabularList.from_df(data_train_df, path=config['path'],
+                            cat_names=cat_names, cont_names=cont_names,
+                            procs=procs)
+            .split_by_valid_func(fn)
+            .label_from_df(**label_from_df_params)
+            .databunch())
+
+    print(data_train.show_batch(rows=10))
+    print(data_train)
+
+    config.update({
+        'data_train': data_train,
+        'data_test': data_test
+    })
+
+    return config
+
+
 # ------------- new version of data 2020-05 --------------------------
 # PatientID	gender	age	Survival.time	Mcode
 # Mcode.description	Histology	Overall.stage
