@@ -112,7 +112,7 @@ def data_load_df(**config):
             .split_by_rand_pct(valid_pct=0.1, seed=config.get('seed', 43))
             .label_from_df(cols=config['dep_var'], label_cls=FloatList, log=config['is_log'])
             .add_test(test)
-            .databunch())
+            .databunch(bs=config.get('bs', 64)))
 
     print(data_train.show_batch(rows=10))
     print(data_train)
@@ -161,7 +161,7 @@ def data_load_df_general(**config):
             .split_by_rand_pct(valid_pct=0.1, seed=config.get('seed', 43))
             .label_from_df(**label_from_df_params)
             .add_test(test)
-            .databunch())
+            .databunch(bs=config.get('bs', 64)))
 
     def fn(idx, **kwargs):
         return idx in data_test_df.index
@@ -172,7 +172,7 @@ def data_load_df_general(**config):
                             procs=procs)
             .split_by_valid_func(fn)
             .label_from_df(**label_from_df_params)
-            .databunch())
+            .databunch(bs=config.get('bs', 64)))
 
     print(data_train.show_batch(rows=10))
     print(data_train)
