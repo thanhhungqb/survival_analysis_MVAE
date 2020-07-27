@@ -166,6 +166,11 @@ def data_load_df_general(**config):
     def fn(idx, **kwargs):
         return idx in data_test_df.index
 
+    # TODO bug:
+    #   some cases, for cat_names, number of kinds in data_test are more than in data_train (e.g. 1,2)
+    #   (mean this kind only occur in validation but not in train in split_by_rand_pct step)
+    #   => embedding step later will be fail like "srcIndex < srcSelectDimSize" (at test step)
+    #   ALSO, make sure the embedding order it the same as in data_train (same index order)
     data_test = (
         TabularList.from_df(data_train_df, path=config['path'],
                             cat_names=cat_names, cont_names=cont_names,
