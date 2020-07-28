@@ -1,5 +1,6 @@
 import deprecation
 from fastai.tabular import *
+from sklearn.model_selection import train_test_split
 
 from prlab.gutils import encode_and_bind, column_map, clean_str, load_json_text_lines
 from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
@@ -133,19 +134,18 @@ def data_load_df_general(**config):
     :param config:
     :return: new config
     """
+    config['df'] = config['df'].reset_index(drop=True)
     df = config['df']
-    data_train_df = df[df['fold'] != config['test_fold']].copy()
-    data_test_df = df[df['fold'] == config['test_fold']].copy()
 
-    cat_names_default = data_train_df.select_dtypes(include=['object']).columns.tolist()
-    cont_names_default = data_train_df.select_dtypes(include=[np.number]).columns.tolist()
+    train_valid_idx = list(df[df['fold'] != config['test_fold']].index)
+    test_idx = list(df[df['fold'] == config['test_fold']].index)
+
+    cat_names_default = df.select_dtypes(include=['object']).columns.tolist()
+    cont_names_default = df.select_dtypes(include=[np.number]).columns.tolist()
     cat_names, cont_names = config.get('cat_names', cat_names_default), config.get('cont_names', cont_names_default)
 
     procs_default = [FillMissing, Categorify, Normalize][:2]
     procs = config.get('procs', procs_default)
-
-    # Test
-    test = TabularList.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
 
     # label_cls infer from the type of config['dep_var']
     lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (np.int64, np.int, int)) else CategoryList
@@ -153,34 +153,53 @@ def data_load_df_general(**config):
     if label_from_df_params['label_cls'] == FloatList:
         label_from_df_params['log'] = config['is_log']
 
+    # careful random separated train and validation
+    valid_rate = config.get('valid_pct', 0.1)
+    random_seed = config.get('seed', 43)
+    train_idx, valid_idx = train_test_split(train_valid_idx, test_size=valid_rate, random_state=random_seed)
+
+    train_valid_df = df.iloc[train_idx + valid_idx].copy().reset_index(drop=True)
+    valid_idx_start = len(train_idx)
+
+    def valid_fn(idx):
+        return idx >= valid_idx_start
+
     # Train data bunch
     data_train = (
-        TabularList.from_df(data_train_df, path=config['path'],
+        TabularList.from_df(train_valid_df, path=config['path'],
                             cat_names=cat_names, cont_names=cont_names,
                             procs=procs)
-            .split_by_rand_pct(valid_pct=0.1, seed=config.get('seed', 43))
+            .split_by_valid_func(valid_fn)
             .label_from_df(**label_from_df_params)
-            .add_test(test)
             .databunch(bs=config.get('bs', 64)))
 
-    def fn(idx, **kwargs):
-        return idx in data_test_df.index
+    train_test_df = df.iloc[train_idx + test_idx].copy().reset_index(drop=True)
+    test_idx_start = valid_idx_start
 
-    # TODO bug:
+    def test_fn(idx, **kwargs):
+        # bug: (fixed) idx is not the index from the original DataFrame, this seems the index in list of items
+        # then the df should be reset_index to prevent affect
+        return idx >= test_idx_start
+
+    # bug: (fixed)
     #   some cases, for cat_names, number of kinds in data_test are more than in data_train (e.g. 1,2)
     #   (mean this kind only occur in validation but not in train in split_by_rand_pct step)
     #   => embedding step later will be fail like "srcIndex < srcSelectDimSize" (at test step)
-    #   ALSO, make sure the embedding order it the same as in data_train (same index order)
+    #   ALSO, make sure the embedding order is the same as in data_train (same index order)
+
+    # to get two sets for test only, and add to data_test later
+    # should be from data_train_df to keep the categories labels order
     data_test = (
-        TabularList.from_df(data_train_df, path=config['path'],
+        TabularList.from_df(train_test_df, path=config['path'],
                             cat_names=cat_names, cont_names=cont_names,
                             procs=procs)
-            .split_by_valid_func(fn)
+            .split_by_valid_func(test_fn)
             .label_from_df(**label_from_df_params)
             .databunch(bs=config.get('bs', 64)))
 
     print(data_train.show_batch(rows=10))
     print(data_train)
+    print(data_test)
 
     config.update({
         'data_train': data_train,
