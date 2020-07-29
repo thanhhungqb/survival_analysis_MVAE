@@ -37,20 +37,22 @@ def df_read(**config):
     return config
 
 
+@deprecation.deprecated(details="prlab.fastai.pipeline.make_one_hot_df_pipe is more general and consider to use")
 def make_one_hot_df(**config):
     """
     Follow Pipeline Process template in `prlab.fastai.pipeline.pipeline_control_multi`.
+    Consider to use `prlab.fastai.pipeline.make_one_hot_df_pipe`, two pipe have similar idea but different implement
     Call before `prlab.medical.data_helper.data_load_df`
     Update some field in df and make config to work with one-hot
     :param config:
     :return:
     """
-    ndf = encode_and_bind(config['df'], [TNM_CODE_C, M_CODE_C], keep_old=False)
+    ndf = encode_and_bind(config['df'], config['cat_names'], keep_old=False)
     config['df'] = ndf
 
     # update cat_names to [] and cont_names to all fields (except fold)
     cont_names = config['df'].select_dtypes(include=[np.number]).columns.tolist()
-    cont_names = [o for o in cont_names if o not in [SURVIVAL_C, config['dep_var']]]
+    cont_names = [o for o in cont_names if o not in ['Survival.time', SURVIVAL_C, config['dep_var']]]
     cont_names = [o for o in cont_names if o != 'fold']  # remove fold if has
     config['cat_names'], config['cont_names'] = [], cont_names
 
