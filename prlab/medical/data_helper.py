@@ -208,7 +208,7 @@ def data_load_df_general(**config):
 
     # careful random separated train and validation
     valid_rate = config.get('valid_pct', 0.1)
-    random_seed = config.get('seed', 43)
+    random_seed = config.get('seed', None)
     train_idx, valid_idx = train_test_split(train_valid_idx, test_size=valid_rate, random_state=random_seed)
 
     train_valid_df = df.iloc[train_idx + valid_idx].copy().reset_index(drop=True)
