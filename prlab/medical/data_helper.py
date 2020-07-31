@@ -37,6 +37,37 @@ def df_read(**config):
     return config
 
 
+class DfRateKeepFilter:
+    """
+    Follow Pipe template.
+    Work with df in config and filter to keep only rate
+    """
+
+    def __init__(self, rate_keep, seed=None, **config):
+        """
+
+        :param rate_keep: (0.0, 1.0)
+        :param seed: None or a number
+        :param config:
+        """
+        self.rate_keep = rate_keep
+        self.seed = seed
+        assert 0 < self.rate_keep < 1
+
+    def __call__(self, *args, **config):
+        df = config['df'].reset_index(drop=True)
+        idx = list(df.index)
+        if self.seed is not None:
+            np.random.seed(self.seed)
+
+        selected = np.random.choice(idx, size=int(self.rate_keep * len(idx)))
+        selected = selected.tolist()
+
+        selected_df = df.iloc[selected].copy().reset_index(drop=True)
+        config['df'] = selected_df
+        return config
+
+
 @deprecation.deprecated(details="prlab.fastai.pipeline.make_one_hot_df_pipe is more general and consider to use")
 def make_one_hot_df(**config):
     """
