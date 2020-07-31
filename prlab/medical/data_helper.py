@@ -68,6 +68,26 @@ class DfRateKeepFilter:
         return config
 
 
+class DfRateKeepTrainFilter(DfRateKeepFilter):
+    """
+    Similar to `DfRateKeepFilter` except keep the original test_fold if have
+    """
+
+    def __init__(self, rate_keep, seed=None, **config):
+        super(DfRateKeepTrainFilter, self).__init__(rate_keep, seed, **config)
+
+    def __call__(self, *args, **config):
+        df = config['df']
+        train_df = df[df['fold'] != config['test_fold']]
+        test_df = df[df['fold'] == config['test_fold']]
+        config['df'] = train_df
+        config = super().__call__(*args, **config)
+
+        config['df'] = pd.concat([config['df'], test_df]).reset_index(drop=True)
+
+        return config
+
+
 @deprecation.deprecated(details="prlab.fastai.pipeline.make_one_hot_df_pipe is more general and consider to use")
 def make_one_hot_df(**config):
     """
