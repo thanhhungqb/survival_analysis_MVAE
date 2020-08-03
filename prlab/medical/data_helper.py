@@ -211,6 +211,18 @@ def data_load_df_general(**config):
     random_seed = config.get('seed', None)
     train_idx, valid_idx = train_test_split(train_valid_idx, test_size=valid_rate, random_state=random_seed)
 
+    # some case, we use only subset of train instead of full
+    # this code will support keep valid/test unchanged when select sample for training set
+    # if does not need prevent valid, consider use `prlab.medical.data_helper.DfRateKeepTrainFilter`
+    # if does not need prevent test, consider use `prlab.medical.data_helper.DfRateKeepFilter`
+    if config.get('train_sampling_rate', None) is not None:
+        assert 0.0 <= config['train_sampling_rate'] <= 1.0
+        if config.get('train_sampling_seed', None) is not None:
+            np.random.seed(config['train_sampling_seed'])
+
+        train_idx_n = np.random.choice(train_idx, len(train_idx) * config['train_sampling_rate'])
+        train_idx = list(train_idx_n)
+
     train_valid_df = df.iloc[train_idx + valid_idx].copy().reset_index(drop=True)
     valid_idx_start = len(train_idx)
 
