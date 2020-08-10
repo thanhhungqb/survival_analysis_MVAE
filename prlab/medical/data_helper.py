@@ -201,7 +201,8 @@ def data_load_df_general(**config):
     procs = config.get('procs', procs_default)
 
     # label_cls infer from the type of config['dep_var']
-    lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (np.int64, np.int, int)) else CategoryList
+    # np.int64, np.int, int: then CategoryList
+    lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (float, np.float)) else CategoryList
     label_from_df_params = {'cols': config['dep_var'], 'label_cls': lbl_cls}
     if label_from_df_params['label_cls'] == FloatList:
         label_from_df_params['log'] = config['is_log']
