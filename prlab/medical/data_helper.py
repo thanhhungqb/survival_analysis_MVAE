@@ -306,6 +306,8 @@ class XConst:
     NOTE_C = 'note'
 
     DEAD_STATUS_V = 1
+    ALIVE_STATUS_V = 0
+    STOP_FLOWING_UP_V = 9
 
 
 class XFilter:
@@ -316,6 +318,8 @@ class XFilter:
     HAS_SIZE_FILTER = lambda df: df[df[XConst.SIZE_C].notnull()]
     NO_NOTE_FILTER = lambda df: df[df[XConst.NOTE_C].isnull()] if XConst.NOTE_C in list(df.columns) else df
     ONLY_DEAD_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C] == XConst.DEAD_STATUS_V]
+    ONLY_ALIVE_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C] == XConst.ALIVE_STATUS_V]
+    ALIVE_DEAD_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C].isin([XConst.ALIVE_STATUS_V, XConst.DEAD_STATUS_V])]
     COMMON_WEIGHT_SIZE_FILTER = lambda df: XFilter.HAS_SIZE_FILTER(XFilter.HAS_WEIGHT_FILTER(df))
 
 
