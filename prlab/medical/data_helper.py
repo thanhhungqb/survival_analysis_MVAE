@@ -197,7 +197,7 @@ def data_load_df_general(**config):
     cont_names_default = df.select_dtypes(include=[np.number]).columns.tolist()
     cat_names, cont_names = config.get('cat_names', cat_names_default), config.get('cont_names', cont_names_default)
 
-    procs_default = [FillMissing, Categorify, Normalize][:2]
+    procs_default = [FillMissing, Categorify, Normalize]
     procs = config.get('procs', procs_default)
 
     # label_cls infer from the type of config['dep_var']
