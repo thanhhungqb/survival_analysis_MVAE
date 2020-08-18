@@ -2,7 +2,7 @@ import deprecation
 from fastai.tabular import *
 from sklearn.model_selection import train_test_split
 
-from prlab.gutils import encode_and_bind, column_map, clean_str, load_json_text_lines
+from prlab.gutils import encode_and_bind, column_map, clean_str, load_json_text_lines, convert_to_obj_or_fn
 from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
 
 keep_m_code_lst = ['m8041/3', 'm8070/3', 'm8140/3']
@@ -197,11 +197,12 @@ def data_load_df_general(**config):
     cont_names_default = df.select_dtypes(include=[np.number]).columns.tolist()
     cat_names, cont_names = config.get('cat_names', cat_names_default), config.get('cont_names', cont_names_default)
 
-    procs_default = [FillMissing, Categorify, Normalize][:2]
+    procs_default = [FillMissing, Categorify, Normalize]
     procs = config.get('procs', procs_default)
 
     # label_cls infer from the type of config['dep_var']
-    lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (np.int64, np.int, int)) else CategoryList
+    # np.int64, np.int, int: then CategoryList
+    lbl_cls = FloatList if isinstance(df.iloc[0][config['dep_var']], (float, np.float)) else CategoryList
     label_from_df_params = {'cols': config['dep_var'], 'label_cls': lbl_cls}
     if label_from_df_params['label_cls'] == FloatList:
         label_from_df_params['log'] = config['is_log']
@@ -305,6 +306,8 @@ class XConst:
     NOTE_C = 'note'
 
     DEAD_STATUS_V = 1
+    ALIVE_STATUS_V = 0
+    STOP_FLOWING_UP_V = 9
 
 
 class XFilter:
@@ -315,6 +318,8 @@ class XFilter:
     HAS_SIZE_FILTER = lambda df: df[df[XConst.SIZE_C].notnull()]
     NO_NOTE_FILTER = lambda df: df[df[XConst.NOTE_C].isnull()] if XConst.NOTE_C in list(df.columns) else df
     ONLY_DEAD_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C] == XConst.DEAD_STATUS_V]
+    ONLY_ALIVE_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C] == XConst.ALIVE_STATUS_V]
+    ALIVE_DEAD_FILTER = lambda df: df[df[XConst.DEAD_STATUS_C].isin([XConst.ALIVE_STATUS_V, XConst.DEAD_STATUS_V])]
     COMMON_WEIGHT_SIZE_FILTER = lambda df: XFilter.HAS_SIZE_FILTER(XFilter.HAS_WEIGHT_FILTER(df))
 
 
@@ -372,6 +377,11 @@ class SimpleCNUHPreProcessing:
             XTransform.GENDER_TFS,
             XTransform.DAY_TO_YEAR_TFS
         ])
+
+        # for lazy object
+        self.filter_pre_list = convert_to_obj_or_fn(self.filter_pre_list, **self.config)
+        self.filter_post_list = convert_to_obj_or_fn(self.filter_post_list, **self.config)
+        self.tfms = convert_to_obj_or_fn(self.tfms, **self.config)
 
     def __call__(self, **config):
         df = config['df']
