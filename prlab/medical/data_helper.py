@@ -155,7 +155,7 @@ def data_load_df(**config):
     # cont_names = train_data.select_dtypes(include=[np.number]).columns.tolist()
     cat_names, cont_names = config['cat_names'], config['cont_names']
 
-    procs = [FillMissing, Categorify, Normalize][:2]
+    procs = [FillMissing, Categorify, Normalize]
 
     # Test tabularlist
     test = TabularList.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
@@ -345,9 +345,10 @@ class XTransform:
         if not isinstance(f_el, tuple):
             lst = [(o, idx) for idx, o in enumerate(lst)]
 
-        f_el = lst[0]
-        # TODO update in future, now only 0 or 1
-        df.loc[:, field_name] = np.where(df[field_name] == f_el[0], f_el[1], f_el[1] + 1)
+        # convert to dict
+        if isinstance(lst, (list, tuple)):
+            lst = {k: v for k, v in lst}
+        df = df.replace({field_name: lst})
         return df
 
     @staticmethod
