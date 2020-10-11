@@ -57,10 +57,10 @@ def tfms_general_rad(**config):
     tfms = [
         TransformsWrapFn(random_rotate_xy, angle=config.get('rotate_angle', [-30, 30])),
         TransformsWrapFn(rand_crop_near_center,
-                         crop_size=config.get('crop_size', 224),
+                         crop_size=config.get('crop_size', (224, 224)),
                          d=config.get('d_crop', [20, 20])),
         TransformsWrapFn(scipy.ndimage.interpolation.zoom,
-                         zoom=config.get('zoom', [1, 0.25, 0.25]), order=config.get('zoom_order', 0)),
+                         zoom=config.get('zoom', [1, 0.5, 0.5]), order=config.get('zoom_order', 0)),
         to_tensor,
         # transforms.Normalize((0.1307,), (0.3081,)),
     ]
