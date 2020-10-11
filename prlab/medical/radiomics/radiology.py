@@ -3,6 +3,8 @@ from pathlib import Path
 import numpy as np
 from torch.utils.data import Dataset
 
+from prlab.gutils import convert_to_obj_or_fn
+
 
 class SliceDataset(Dataset):
     """
@@ -21,7 +23,7 @@ class SliceDataset(Dataset):
         self.df = df
         self.path = Path(path)
         self.transform = transform
-        self.map_name_fn = map_name_fn if map_name_fn is not None else (lambda pid: f"{pid}.npy")
+        self.map_name_fn = convert_to_obj_or_fn(map_name_fn) if map_name_fn is not None else (lambda pid: f"{pid}.npy")
         if check_file:
             file_ok = [(idx, self.path / self.map_name_fn(self.df['pid'][idx])) for idx in range(len(self.df))]
             file_ok_idx = [idx for idx, o in file_ok if o.is_file()]
