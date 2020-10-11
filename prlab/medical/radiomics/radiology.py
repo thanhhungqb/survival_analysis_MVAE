@@ -11,7 +11,7 @@ class SliceDataset(Dataset):
     Work with pytorch
     """
 
-    def __init__(self, df, path, transform=None, map_name_fn=None, **config):
+    def __init__(self, df, path, transform=None, map_name_fn=None, check_file=True, **config):
         """
         data: extracted npy data with shape (slice_count x H_size x W_size
         NOTE: df should be .reset_index(drop=True) to make [0, len) otherwise access by index will be wrong
@@ -22,6 +22,19 @@ class SliceDataset(Dataset):
         self.path = Path(path)
         self.transform = transform
         self.map_name_fn = map_name_fn if map_name_fn is not None else (lambda pid: f"{pid}.npy")
+        if check_file:
+            file_ok = [(idx, self.path / self.map_name_fn(self.df['pid'][idx])) for idx in range(len(self.df))]
+            file_ok_idx = [idx for idx, o in file_ok if o.is_file()]
+
+            logger = config.get('train_logger', None)
+            if logger is not None:
+                s = set(file_ok_idx)
+                not_found = [o for o in range(len(self.df)) if o not in s]
+                not_found_files = [self.path / self.map_name_fn(self.df['pid'][idx]) for idx in not_found]
+                msg = "\n".join([str(o) for o in not_found_files])
+                logger.warning(f"several file not found to load: \n{msg}")
+
+            self.df = self.df.loc[file_ok_idx].reset_index(drop=True)
 
     def __getitem__(self, index):
         data_path = self.path / self.map_name_fn(self.df['pid'][index])
