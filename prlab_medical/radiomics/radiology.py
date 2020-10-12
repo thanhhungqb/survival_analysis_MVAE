@@ -46,7 +46,7 @@ class SliceDataset(Dataset):
             slices = self.transform(slices)
 
         slices = np.expand_dims(slices, axis=0).astype(np.float32)
-        return slices, self.df['Survival.time'][index]
+        return slices, np.array(self.df['Survival.time'][index]).astype(np.float32)
 
     def __len__(self):
         return len(self.df)
