@@ -5,8 +5,8 @@ from torchvision import transforms
 
 from outside.medical_image_pre_aug import elastic_transform_3d
 from prlab.data_process.augmentation import rand_crop_near_center
-from prlab_medical.radiomics import SliceDataset
 from prlab.torch.functions import TransformsWrapFn
+from prlab_medical.radiomics.radiology import SliceDataset
 
 
 def patient_data_loader(**config):
