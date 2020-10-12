@@ -3,7 +3,7 @@ from fastai.tabular import *
 from sklearn.model_selection import train_test_split
 
 from prlab.common.utils import encode_and_bind, column_map, clean_str, load_json_text_lines, convert_to_obj_or_fn
-from prlab.medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
+from prlab_medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
 
 keep_m_code_lst = ['m8041/3', 'm8070/3', 'm8140/3']
 
@@ -93,7 +93,7 @@ def make_one_hot_df(**config):
     """
     Follow Pipeline Process template in `prlab.fastai.pipeline.pipeline_control_multi`.
     Consider to use `prlab.fastai.pipeline.make_one_hot_df_pipe`, two pipe have similar idea but different implement
-    Call before `prlab.medical.data_helper.data_load_df`
+    Call before `prlab.prlab_medical.data_helper.data_load_df`
     Update some field in df and make config to work with one-hot
     :param config:
     :return:
@@ -214,8 +214,8 @@ def data_load_df_general(**config):
 
     # some case, we use only subset of train instead of full
     # this code will support keep valid/test unchanged when select sample for training set
-    # if does not need prevent valid, consider use `prlab.medical.data_helper.DfRateKeepTrainFilter`
-    # if does not need prevent test, consider use `prlab.medical.data_helper.DfRateKeepFilter`
+    # if does not need prevent valid, consider use `prlab.prlab_medical.data_helper.DfRateKeepTrainFilter`
+    # if does not need prevent test, consider use `prlab.prlab_medical.data_helper.DfRateKeepFilter`
     if config.get('train_sampling_rate', None) is not None:
         assert 0.0 <= config['train_sampling_rate'] <= 1.0
         if config.get('train_sampling_seed', None) is not None:

@@ -3,8 +3,9 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from prlab.data_process.augmentation import rand_crop_near_center, random_rotate_xy
-from prlab.medical.radiomics.radiology import SliceDataset
+from outside.medical_image_pre_aug import elastic_transform_3d
+from prlab.data_process.augmentation import rand_crop_near_center
+from prlab_medical.radiomics import SliceDataset
 from prlab.torch.functions import TransformsWrapFn
 
 
@@ -55,12 +56,13 @@ def tfms_general_rad(**config):
     to_tensor = lambda slices: torch.tensor(slices)
 
     tfms = [
-        TransformsWrapFn(random_rotate_xy, angle=config.get('rotate_angle', [-30, 30])),
+        # TransformsWrapFn(random_rotate_xy, angle=config.get('rotate_angle', [-30, 30])),
         TransformsWrapFn(rand_crop_near_center,
                          crop_size=config.get('crop_size', (224, 224)),
                          d=config.get('d_crop', [20, 20])),
         TransformsWrapFn(scipy.ndimage.interpolation.zoom,
                          zoom=config.get('zoom', [1, 0.5, 0.5]), order=config.get('zoom_order', 0)),
+        TransformsWrapFn(elastic_transform_3d),
         to_tensor,
         # transforms.Normalize((0.1307,), (0.3081,)),
     ]

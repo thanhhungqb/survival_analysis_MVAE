@@ -4,13 +4,13 @@
 import pandas as pd
 
 from prlab.common.utils import constant_map_dict
-from prlab.medical.cnuh_constants import *
-from prlab.medical.medicine_data_process import data_filter, data_preprocessing, data_transform
+from prlab_medical.cnuh_constants import *
+from prlab_medical import data_filter, data_preprocessing, data_transform
 
 
 def select_data(fname, save_file):
     """
-    medical-selected.csv
+    prlab_medical-selected.csv
     :param fname:
     :return:
     """
@@ -60,7 +60,7 @@ with open(MAP_FILE_NAME) as fp:
 
 def cnuh_data_transform(data_df, selected_header=None):
     """
-    medical-selected.csv
+    prlab_medical-selected.csv
     :param data_df: dataframe contains data
     :param selected_header:
     :return:
