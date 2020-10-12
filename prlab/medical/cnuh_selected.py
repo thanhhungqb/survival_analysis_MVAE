@@ -3,7 +3,7 @@
 
 import pandas as pd
 
-from prlab.gutils import constant_map_dict
+from prlab.common.utils import constant_map_dict
 from prlab.medical.cnuh_constants import *
 from prlab.medical.medicine_data_process import data_filter, data_preprocessing, data_transform
 

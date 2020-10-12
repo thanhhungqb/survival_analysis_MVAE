@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 from torch.utils.data import Dataset
 
-from prlab.gutils import convert_to_obj_or_fn
+from prlab.common.utils import convert_to_obj_or_fn
 
 
 class SliceDataset(Dataset):
