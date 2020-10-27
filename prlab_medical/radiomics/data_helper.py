@@ -1,9 +1,9 @@
-import scipy
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from outside.medical_image_pre_aug import elastic_transform_3d
+from prlab.common.utils import convert_to_obj_or_fn
 from prlab.data_process.augmentation import rand_crop_near_center
 from prlab.torch.functions import TransformsWrapFn
 from prlab_medical.radiomics.radiology import SliceDataset
@@ -22,8 +22,8 @@ def patient_data_loader(**config):
     train_df, test_df = config['train_df'], config['test_df']
     valid_df = config.get('valid_df', None)
 
-    train_tfms = config.get('tfms', [])
-    test_tfms = config.get('tfms_test', train_tfms)  # test aug
+    train_tfms = convert_to_obj_or_fn(config.get('tfms', []))
+    test_tfms = convert_to_obj_or_fn(config.get('tfms_test', train_tfms))  # test aug
     train_tfms, test_tfms = transforms.Compose(train_tfms), transforms.Compose(test_tfms)
 
     train_dataset = SliceDataset(transform=train_tfms, **{**config, 'df': train_df})
@@ -60,8 +60,6 @@ def tfms_general_rad(**config):
         TransformsWrapFn(rand_crop_near_center,
                          crop_size=config.get('crop_size', (224, 224)),
                          d=config.get('d_crop', [20, 20])),
-        TransformsWrapFn(scipy.ndimage.interpolation.zoom,
-                         zoom=config.get('zoom', [1, 0.5, 0.5]), order=config.get('zoom_order', 0)),
         TransformsWrapFn(elastic_transform_3d),
         to_tensor,
         # transforms.Normalize((0.1307,), (0.3081,)),
