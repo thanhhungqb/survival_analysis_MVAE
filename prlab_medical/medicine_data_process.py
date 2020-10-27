@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 # define some constants
-from prlab.medical.cnuh_constants import *
+from prlab_medical.cnuh_constants import *
 
 
 def data_filter(df):
