@@ -3,10 +3,9 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from outside.medical_image_pre_aug import elastic_transform_3d
-from prlab.common.utils import convert_to_obj_or_fn
+from prlab.common.utils import convert_to_obj_or_fn, load_func_by_name
 from prlab.data_process.augmentation import rand_crop_near_center
 from prlab.torch.functions import TransformsWrapFn
-from prlab_medical.radiomics.radiology import SliceDataset
 
 
 def patient_data_loader(**config):
@@ -26,9 +25,13 @@ def patient_data_loader(**config):
     test_tfms = convert_to_obj_or_fn(config.get('tfms_test', train_tfms))  # test aug
     train_tfms, test_tfms = transforms.Compose(train_tfms), transforms.Compose(test_tfms)
 
-    train_dataset = SliceDataset(transform=train_tfms, **{**config, 'df': train_df})
-    test_dataset = SliceDataset(transform=test_tfms, **{**config, 'df': test_df})
-    valid_dataset = SliceDataset(transform=test_tfms, **{**config, 'df': valid_df}) if valid_df is not None else None
+    default_dataset_cls = "prlab_medical.radiomics.radiology.SliceDataset"
+    dataset_cls = config.get('dataset_cls', default_dataset_cls)
+    dataset_cls = load_func_by_name(dataset_cls)[0]  # this case, just load cls but not make object yet
+
+    train_dataset = dataset_cls(transform=train_tfms, **{**config, 'df': train_df})
+    test_dataset = dataset_cls(transform=test_tfms, **{**config, 'df': test_df})
+    valid_dataset = dataset_cls(transform=test_tfms, **{**config, 'df': valid_df}) if valid_df is not None else None
 
     kk = ['batch_size', 'shuffle', 'sampler', 'batch_sampler', 'num_workers', 'collate_fn',
           'pin_memory', 'drop_last', 'timeout', 'worker_init_fn', 'multiprocessing_context']
