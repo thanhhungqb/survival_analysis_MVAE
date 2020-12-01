@@ -1,5 +1,9 @@
 import deprecation
-from fastai.tabular import *
+import numpy as np
+import pandas as pd
+from fastai.data.transforms import Normalize
+from fastai.tabular.core import Categorify, FillMissing
+from fastai.tabular.data import TabularDataLoaders
 from sklearn.model_selection import train_test_split
 
 from prlab.common.utils import encode_and_bind, column_map, clean_str, load_json_text_lines, convert_to_obj_or_fn
@@ -158,11 +162,12 @@ def data_load_df(**config):
     procs = [FillMissing, Categorify, Normalize]
 
     # Test tabularlist
-    test = TabularList.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
+    test = TabularDataLoaders.from_df(data_test_df, cat_names=cat_names, cont_names=cont_names, procs=procs)
 
     # Train data bunch
     data_train = (
-        TabularList.from_df(data_train_df, path=config['path'], cat_names=cat_names, cont_names=cont_names, procs=procs)
+        TabularDataLoaders.from_df(data_train_df, path=config['path'], cat_names=cat_names, cont_names=cont_names,
+                                   procs=procs)
             .split_by_rand_pct(valid_pct=0.1, seed=config.get('seed', 43))
             .label_from_df(cols=config['dep_var'], label_cls=FloatList, log=config['is_log'])
             .add_test(test)
@@ -232,9 +237,9 @@ def data_load_df_general(**config):
 
     # Train data bunch
     data_train = (
-        TabularList.from_df(train_valid_df, path=config['path'],
-                            cat_names=cat_names, cont_names=cont_names,
-                            procs=procs)
+        TabularDataLoaders.from_df(train_valid_df, path=config['path'],
+                                   cat_names=cat_names, cont_names=cont_names,
+                                   procs=procs)
             .split_by_valid_func(valid_fn)
             .label_from_df(**label_from_df_params)
             .databunch(bs=config.get('bs', 64)))
@@ -256,9 +261,9 @@ def data_load_df_general(**config):
     # to get two sets for test only, and add to data_test later
     # should be from data_train_df to keep the categories labels order
     data_test = (
-        TabularList.from_df(train_test_df, path=config['path'],
-                            cat_names=cat_names, cont_names=cont_names,
-                            procs=procs)
+        TabularDataLoaders.from_df(train_test_df, path=config['path'],
+                                   cat_names=cat_names, cont_names=cont_names,
+                                   procs=procs)
             .split_by_valid_func(test_fn)
             .label_from_df(**label_from_df_params)
             .databunch(bs=config.get('bs', 64)))
