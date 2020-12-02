@@ -88,7 +88,7 @@ class ClinicalDataset(Dataset):
         # type to use, default is float32 and int64, but maybe change in future
         self.float_type, self.int_type = float_type, int_type
 
-        self.label_fn = label_fn if label_fn is not None else (lambda x, **kw: x)
+        self.label_fn = convert_to_obj_or_fn(label_fn) if label_fn is not None else (lambda x, **kw: x)
 
     def __getitem__(self, index):
         cat_values = [self.df[o][index] for o in self.cat_names]
