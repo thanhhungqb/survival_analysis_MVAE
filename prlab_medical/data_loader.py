@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import norm
 from torch.utils.data import Dataset
 
 from prlab.common.utils import convert_to_obj_or_fn, CategoricalEncoderPandas
@@ -107,3 +108,52 @@ class ClinicalDataset(Dataset):
 
     def __len__(self):
         return len(self.df)
+
+
+class SurvivalRegClsLabelFn:
+    """
+    Join regression and binary classification for survival time.
+    x should be [single_float], return [float] + [int(0/1)] (float[2])
+    """
+
+    def __init__(self, sep_value, scale=1., dtype=np.float32, **kwargs):
+        """
+        :param sep_value: for binary classes separated, before scale
+        :param scale: e.g. 365 to convert from days to years, 1/365 if reverse
+        :param dtype: default is float32, but maybe down to float16 later
+        :param kwargs:
+        """
+        self.scale = scale  # x = x / scale
+        self.sep_value = sep_value
+        self.dtype = dtype
+
+    def __call__(self, x, *args, **kwargs):
+        cls = 0 if x < self.sep_value else 1
+        x = x / self.scale
+        return np.array([x, cls], dtype=self.dtype).reshape(-1)
+
+
+class SurvivalRegClsProbLabelFn(SurvivalRegClsLabelFn):
+    """
+    Join regression and binary classification for survival time.
+    x should be [single_float], return [float] + [prob_0, prob_1] (float[3]).
+    NOTE: We assume the survival time for each patient is normal distribution and std linear related to x,
+    std = x * std_rate, e.g. 10 years of survival time with std 1 year.
+    """
+
+    def __init__(self, sep_value, std_rate=0.1, scale=1., dtype=np.float32, **kwargs):
+        """
+        :param sep_value: for binary classes separated, before scale
+        :param std_rate: for calculate std based on x
+        :param scale: e.g. 365 to convert from days to years, 1/365 if reverse
+        :param kwargs:
+        """
+        super(SurvivalRegClsProbLabelFn, self).__init__(sep_value=sep_value, scale=scale, dtype=dtype, **kwargs)
+        self.std_rate = std_rate
+
+    def __call__(self, x, *args, **kwargs):
+        dis = norm(x, x * self.std_rate)
+        p_lh = dis.cdf(self.sep_value)
+        p_lh = [p_lh, 1 - p_lh]
+        x = x / self.scale
+        return np.array([x, *p_lh], dtype=self.dtype).reshape(-1)
