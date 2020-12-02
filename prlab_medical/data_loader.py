@@ -97,11 +97,11 @@ class ClinicalDataset(Dataset):
         cont_values = [self.df[o][index] for o in self.cont_names]
 
         y_values = [self.df[o][index] for o in self.y_names]
+        y_values = np.array(y_values, self.y_type)
         y_values = self.label_fn(y_values)
 
         cat_values = np.array(cat_values, dtype=self.int_type).reshape(-1)
         cont_values = np.array(cont_values, dtype=self.float_type)
-        y_values = np.array(y_values, self.y_type)
 
         return (cat_values, cont_values), y_values
 
