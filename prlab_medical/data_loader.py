@@ -5,6 +5,19 @@ from scipy.stats import norm
 from torch.utils.data import Dataset
 
 from prlab.common.utils import convert_to_obj_or_fn, CategoricalEncoderPandas
+from prlab_medical.data_helper import XConst
+
+
+def event_norm(events):
+    """
+    see XConst, event including:
+        DEAD_STATUS_V => 1 (event)
+        ALIVE_STATUS_V, STOP_FLOWING_UP_V => 0 (censoring)
+    :param events:
+    :return:
+    """
+    events = [1 if o == XConst.DEAD_STATUS_V else 0 for o in events]
+    return events
 
 
 class SliceDataset(Dataset):
@@ -88,7 +101,7 @@ class ClinicalDataset(Dataset):
         # type to use, default is float32 and int64, but maybe change in future
         self.float_type, self.int_type = float_type, int_type
 
-        self.label_fn = convert_to_obj_or_fn(label_fn) if label_fn is not None else (lambda x, **kw: x)
+        self.label_fn = convert_to_obj_or_fn(label_fn, **config) if label_fn is not None else (lambda x, **kw: x)
 
     def __getitem__(self, index):
         cat_values = [self.df[o][index] for o in self.cat_names]
@@ -157,3 +170,29 @@ class SurvivalRegClsProbLabelFn(SurvivalRegClsLabelFn):
         p_lh = [p_lh, 1 - p_lh]
         x = x / self.scale
         return np.array([x, *p_lh], dtype=self.dtype).reshape(-1)
+
+
+class SurvivalHazardDiscreteFn:
+    """
+    Convert to idx_durations, events to work with `pycox.models.loss.NLLLogistiHazardLoss`
+    Require:
+        LogisticHazard.label_transform(num_durations) and fit_transform outside (by train data)
+    """
+
+    def __init__(self, labtrans, **kwargs):
+        self.labtrans = labtrans
+
+    def __call__(self, x, *args, **kwargs):
+        """
+        :param x: should be duration, event, note, single element, not list
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        duration, event = x
+        events = event_norm([event])
+        ret = self.labtrans.transform(np.array([duration], dtype=np.float32),
+                                      np.array(events, np.float32))
+        # TODO make correct form to pass to model
+        # convert from form (array([10]), array([1.], dtype=float32)) of each element
+        return ret
