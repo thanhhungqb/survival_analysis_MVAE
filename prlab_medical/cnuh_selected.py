@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
+import json
 
 import pandas as pd
 
 from prlab.common.utils import constant_map_dict
-from prlab_medical.cnuh_constants import *
+from prlab_medical.cnuh_constants import MAP_FILE_NAME
 from prlab_medical.medicine_data_process import data_filter, data_preprocessing, data_transform
 
 
