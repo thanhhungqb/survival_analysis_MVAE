@@ -7,7 +7,8 @@ from fastai.tabular.data import TabularDataLoaders
 from sklearn.model_selection import train_test_split
 
 from prlab.common.utils import encode_and_bind, column_map, clean_str, load_json_text_lines, convert_to_obj_or_fn
-from prlab_medical.cnuh_selected import cnuh_data_transform, selected_header_en, TNM_CODE_C, M_CODE_C, SURVIVAL_C
+from prlab_medical.cnuh_selected import cnuh_data_transform, selected_header_en
+from prlab_medical.cnuh_constants import TNM_CODE_C, M_CODE_C, SURVIVAL_C
 
 keep_m_code_lst = ['m8041/3', 'm8070/3', 'm8140/3']
 
