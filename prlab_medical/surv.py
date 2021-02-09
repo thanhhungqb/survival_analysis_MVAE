@@ -1,7 +1,7 @@
 """
 Implement some function related to survival analysis
 """
-
+import torch
 import torch.nn as nn
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
@@ -14,6 +14,28 @@ class LossAELogHaz(nn.Module):
 
     def forward(self, phi, target_loghaz):
         idx_durations, events = target_loghaz
+        loss_surv = self.loss_surv(phi, idx_durations, events)
+
+        return loss_surv
+
+
+class LossLogHazInd(nn.Module):
+    """
+    Task Haz + Individual reg, size (T+1)
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.loss_surv = NLLLogistiHazardLoss()
+        self.loss_ind = nn.MSELoss()
+
+    def forward(self, phi, target_loghaz):
+        phi, ind_sv = phi[:, :-1], phi[:, -1]
+
+        idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
+        idx_durations = idx_durations.type(torch.int64)
+        t_ind_sv, t_org_event = target_loghaz[:, 2], target_loghaz[:, 3]
+
         loss_surv = self.loss_surv(phi, idx_durations, events)
 
         return loss_surv
