@@ -3,8 +3,8 @@ Implement some function related to survival analysis
 """
 
 import torch.nn as nn
-from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
+from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
 
 class LossAELogHaz(nn.Module):
@@ -21,7 +21,7 @@ class LossAELogHaz(nn.Module):
 
 class LabelTransform:
     def __init__(self, train_durations, train_events, num_durations=10, **kwargs):
-        labtrans = LogisticHazard.label_transform(num_durations)
+        labtrans = LabTransDiscreteTime(num_durations)
 
         # fit transform with train label
         y_train_surv = labtrans.fit_transform(train_durations, train_events)
