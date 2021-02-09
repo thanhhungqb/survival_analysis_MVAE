@@ -48,4 +48,6 @@ def make_label_transform_pipe(**config):
     params = {**config, 'train_durations': train_durations, 'train_events': train_events}
     label_trans = LabelTransform(**params)
     config['labtrans'] = label_trans.trans
+
+    config['labtrans_cuts'] = label_trans.trans.idu.cuts
     return config
