@@ -181,6 +181,7 @@ class SurvivalHazardDiscreteFn:
 
     def __init__(self, labtrans, **kwargs):
         self.labtrans = labtrans
+        self.original_label = True
 
     def __call__(self, x, *args, **kwargs):
         """
@@ -189,10 +190,19 @@ class SurvivalHazardDiscreteFn:
         :param kwargs:
         :return:
         """
+        # receive single duration and single event
         duration, event = x
         events = event_norm([event])
-        ret = self.labtrans.transform(np.array([duration], dtype=np.float32),
-                                      np.array(events, np.float32))
-        # TODO make correct form to pass to model
-        # convert from form (array([10]), array([1.], dtype=float32)) of each element
+
+        # transform require some event 1 occur, then add fake value to call (one duration and 1)
+        durations = np.array([duration, duration], dtype=np.float32)
+        events = np.array(events + [1], dtype=np.float32)
+
+        # convert from form (array([10,FAKE]), array([1.,FAKE], dtype=float32)) of each element
+        ret = self.labtrans.transform(durations, events)
+        ret = [ret[0][0], ret[1][0]]  # remove fake values
+        if self.original_label:
+            ret = ret + [duration, event]
+
+        ret = np.array(ret, dtype=np.float32)
         return ret
