@@ -91,6 +91,15 @@ def surv_ppp_merge_hazard_st_fn(batch_tensor, **config):
     """
     output from MultiDecoderVAE with only one second_decoder
     [[bs, n_hazard+1]]"""
-    x = batch_tensor[0].cpu().detach().numpy().tolist()
+    ele = batch_tensor[0].cpu().detach()
+    hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
+    ind_st = ele[:, -1].numpy().tolist()
+    x = zip(hazards, ind_st)
 
-    return x
+    # for easy to use, separated n_hazard and survival time predict and named it
+    def fn(one):
+        return {'hazard': one[0], 'survival time': one[1]}
+
+    ret = [fn(one) for one in x]
+
+    return ret
