@@ -80,6 +80,24 @@ class LabelTransform:
         return self.trans.transform(durations, events)
 
 
+def train_valid_filter(**config):
+    """
+    Train and valid filter based on the column with 0/1 for omit/keep.
+    Should be run after train_test_split_fold
+    :param config: train_df, may be have valid_df
+    :return: updated train_df, valid_df with only 1 value in column name filter_col_name
+    """
+    filter_col_name = config['filter_col_name']
+
+    df = config['train_df']
+    config['train_df'] = df[df[filter_col_name] == 1]
+
+    if config.get('valid_df') is not None:
+        df = config['valid_df']
+        config['valid_df'] = df[df[filter_col_name] == 1]
+    return config
+
+
 def make_label_transform_pipe(**config):
     train_df = config['train_df']
     train_durations, train_events = [train_df[o] for o in config['y_names']]
