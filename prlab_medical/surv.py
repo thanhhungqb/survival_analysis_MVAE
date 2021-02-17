@@ -3,12 +3,14 @@ Implement some function related to survival analysis
 """
 import math
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
+from prlab.torch.utils import cumsum_rev
 from prlab_medical.data_loader import event_norm
 
 
@@ -27,6 +29,8 @@ class LossAELogHaz(nn.Module):
 class LossLogHazInd(nn.Module):
     """
     Task Haz + Individual reg, size (T+1)
+    phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi)
+    # see `pycox.models.loss.nll_logistic_hazard`
     """
 
     def __init__(self, alpha=0.5, **kwargs):
@@ -57,8 +61,92 @@ class LossLogHazInd(nn.Module):
         return loss_surv * self.alpha + loss_mse * (1 - self.alpha)
 
 
+class LossHazClsInd(LossLogHazInd):
+    """
+    Loss include several part: NLLLogistiHazardLoss, cross entropy, MSE of ind reg and MSE of ind infer from f_j
+
+    Task Haz + Individual reg, size (T+1)
+    Note: different meaning of phi with LossLogHazInd as bellow
+        phi {torch.tensor} -- Estimates in (-inf, inf), and softmax => f_j = p(T=t_j)
+        S_j = S(t_j) = p(T >= t_j) = cumsum(f_j) # reverse
+        h_j = h(t_j) = p(T = t_j | T >= t_j) = f_j / S_j
+    """
+
+    def __init__(self, alpha=0.5, **kwargs):
+        super().__init__(alpha=alpha, **kwargs)
+
+        cuts = kwargs['cuts']  # using fixed cuts values
+        self.cuts = cuts  # 0: c0-c1, 1: c1-c2, ..., i: ci-c(i+1)...
+        self.mid_values = [0.5 * (cuts[i] + cuts[i + 1]) for i in range(len(cuts) - 1)]
+        self.mid_values.append(cuts[-1] + 0.5 * (cuts[-2] + cuts[-1]))  # last value is base on previous
+        self.mid_values = torch.tensor(self.mid_values)
+
+    def forward(self, phi, target_loghaz):
+        phi, ind_sv = phi[:, :-1], phi[:, -1]
+        device = phi.device
+
+        idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
+        idx_durations = idx_durations.type(torch.int64)
+        t_ind_sv, t_org_event = target_loghaz[:, 2], target_loghaz[:, 3]
+
+        f_j = torch.softmax(phi, dim=-1)
+        s_j = cumsum_rev(f_j)
+        h_j = f_j / s_j
+
+        # expected survival time from f_j: \sum(f_j * mid_values_j)
+        values_dev = self.mid_values.to(device=device)  # move to correct device
+        ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
+
+        # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
+        x_phi = torch.log(h_j / (1.000000001 - h_j))
+        loss_surv = self.loss_surv(x_phi, idx_durations, events)
+        loss_surv_ce = None  # TODO CE(f_j, idx_durations)
+
+        # mse only for event
+        with torch.no_grad():
+            n_sample = phi.size()[0]
+            zeros = torch.tensor([0.] * n_sample).to(device)
+            ones = torch.tensor([1.] * n_sample).to(device)
+            hs = torch.where(t_org_event > 0, ones, zeros)
+            sum_hs = torch.sum(hs) + 0.000001
+            hs = hs / sum_hs  # TODO fix in case sum_hs = 0 then set hs to zero
+
+        se = (ind_sv - t_ind_sv) * (ind_sv - t_ind_sv)
+        loss_mse = torch.mean(se * hs)
+
+        se_e = (ind_sv_e - t_ind_sv) * (ind_sv_e - t_ind_sv)
+        loss_mse_e = torch.mean(se_e * hs)
+        # loss_mse, loss_mse_e = loss_mse.mean()
+
+        # TODO loss = loss_surv + loss_surv_ce + loss_mse + loss_mse_e
+        # loss = loss_surv * self.alpha + loss_mse * (1 - self.alpha)
+        self.alpha = 0.99
+        # loss = loss_surv * self.alpha + 0.5 * (loss_mse + loss_mse_e) * (1 - self.alpha)
+        loss = 0.5 * (loss_mse + loss_mse_e)
+
+        return loss
+
+
 class LabelTransform:
-    def __init__(self, train_durations, train_events, num_durations=10, **kwargs):
+    def __init__(self, train_durations=None, train_events=None, cuts=None, num_durations=10, **kwargs):
+        """
+        :param train_durations:
+        :param train_events:
+        :param cuts: list, if given then three others are not need anymore
+        :param num_durations:
+        :param kwargs:
+        """
+
+        # if cuts given (list of cut points), then all other values are not need
+        if cuts is not None:
+            self.trans = LabTransDiscreteTime(cuts=cuts)
+
+            # a, b = np.array([20, 400, 5, 50000]), np.array([0, 0, 1, 1])
+            # print('test', self.trans.transform(a, b))
+            # exit(0)
+            #
+            return None
+
         labtrans = LabTransDiscreteTime(num_durations)
 
         # fit transform with train label
