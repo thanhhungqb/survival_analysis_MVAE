@@ -195,7 +195,8 @@ class SurvivalHazardDiscreteFn:
         events = event_norm([event])
 
         # transform require some event 1 occur, then add fake value to call (one duration and 1)
-        durations = np.array([duration, duration], dtype=np.float32)
+        # fixed bug: fake value should be very small to sure always return not zero
+        durations = np.array([duration, 0.001], dtype=np.float32)
         events = np.array(events + [1], dtype=np.float32)
 
         # convert from form (array([10,FAKE]), array([1.,FAKE], dtype=float32)) of each element
