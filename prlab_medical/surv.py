@@ -84,13 +84,14 @@ class LossHazClsInd(LossLogHazInd):
     def forward(self, phi, target_loghaz):
         phi, ind_sv = phi[:, :-1], phi[:, -1]
         device = phi.device
+        esp = 1e-6
 
         idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
         idx_durations = idx_durations.type(torch.int64)
         t_ind_sv, t_org_event = target_loghaz[:, 2], target_loghaz[:, 3]
 
         f_j = torch.softmax(phi, dim=-1)
-        s_j = cumsum_rev(f_j)
+        s_j = cumsum_rev(f_j) + esp
         h_j = f_j / s_j
 
         # expected survival time from f_j: \sum(f_j * mid_values_j)
@@ -98,7 +99,8 @@ class LossHazClsInd(LossLogHazInd):
         ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
 
         # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-        x_phi = torch.log(h_j / (1.000000001 - h_j))
+        h_j = h_j + esp
+        x_phi = torch.log(h_j) - torch.log(1 - h_j)
         loss_surv = self.loss_surv(x_phi, idx_durations, events)
         loss_surv_ce = None  # TODO CE(f_j, idx_durations)
 
@@ -108,21 +110,18 @@ class LossHazClsInd(LossLogHazInd):
             zeros = torch.tensor([0.] * n_sample).to(device)
             ones = torch.tensor([1.] * n_sample).to(device)
             hs = torch.where(t_org_event > 0, ones, zeros)
-            sum_hs = torch.sum(hs) + 0.000001
-            hs = hs / sum_hs  # TODO fix in case sum_hs = 0 then set hs to zero
 
         se = (ind_sv - t_ind_sv) * (ind_sv - t_ind_sv)
-        loss_mse = torch.mean(se * hs)
+        loss_mse = torch.sum(se * hs) / torch.sum(hs)
 
         se_e = (ind_sv_e - t_ind_sv) * (ind_sv_e - t_ind_sv)
-        loss_mse_e = torch.mean(se_e * hs)
-        # loss_mse, loss_mse_e = loss_mse.mean()
+        loss_mse_e = torch.sum(se_e * hs) / torch.sum(hs)
 
         # TODO loss = loss_surv + loss_surv_ce + loss_mse + loss_mse_e
         # loss = loss_surv * self.alpha + loss_mse * (1 - self.alpha)
-        self.alpha = 0.99
-        # loss = loss_surv * self.alpha + 0.5 * (loss_mse + loss_mse_e) * (1 - self.alpha)
-        loss = 0.5 * (loss_mse + loss_mse_e)
+        loss = loss_surv * self.alpha + 0.5 * (loss_mse + loss_mse_e) * (1 - self.alpha)
+        # loss = 0.5 * (loss_mse + loss_mse_e)
+        # loss = loss_surv
 
         return loss
 
@@ -210,6 +209,41 @@ def surv_ppp_merge_hazard_st_fn(batch_tensor, **config):
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
         return {'hazard': one[0], 'survival time': one[1]}
+
+    ret = [fn(one) for one in x]
+
+    return ret
+
+
+# surv post process for predict, see input form `prlab.torch.utils.default_post_process_fn`
+def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
+    """
+    output from MultiDecoderVAE with only one second_decoder
+    [[bs, n_hazard+1]]"""
+    esp = 1e-6
+    ele = batch_tensor[0].cpu().detach()
+    # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
+    phi = ele[:, :-1]
+    f_j = torch.softmax(phi, dim=-1)
+    s_j = cumsum_rev(f_j) + esp
+    h_j = f_j / s_j
+
+    # expected survival time from f_j: \sum(f_j * mid_values_j)
+    values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
+    ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
+
+    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
+    h_j = h_j + esp
+    x_phi = torch.log(h_j) - torch.log(1 - h_j)
+
+    ind_st = ele[:, -1].numpy().tolist()
+    ind_sv_e = ind_sv_e.numpy().tolist()
+    x_phi = x_phi.numpy().tolist()
+    x = zip(x_phi, ind_st, ind_sv_e)
+
+    # for easy to use, separated n_hazard and survival time predict and named it
+    def fn(one):
+        return {'hazard': one[0], 'survival time 2': one[1], 'survival time': one[2]}
 
     ret = [fn(one) for one in x]
 
