@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from lifelines.utils import concordance_index
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
@@ -278,11 +279,18 @@ def report_survival_time(**config):
     except:
         pass
 
+    # for CI
+    trans = config['labtrans']
+    events = np.array((merge_df['event']))
+    gt_idx, _ = trans.transform(merge_df['gt_sv'], events)
+    pred_idx, _ = trans.transform(merge_df['pred_sv'], events)
+    ci_val = concordance_index(gt_idx, pred_idx, event_observed=events)
+
     config['out'] = {
         'MAE': mae_non_censoring_only(merge_df),
         'MSE': mse_non_censoring_only(merge_df),
         'default_mae_mse': default_mae_mse(merge_df),
-        'CI': None
+        'CI': ci_val
     }
 
     return config
