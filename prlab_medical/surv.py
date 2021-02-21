@@ -229,22 +229,23 @@ def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
     s_j = cumsum_rev(f_j) + esp
     h_j = f_j / s_j
 
-    # expected survival time from f_j: \sum(f_j * mid_values_j)
-    values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-
     # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
     h_j = h_j + esp
     x_phi = torch.log(h_j) - torch.log(1 - h_j)
 
     ind_st = ele[:, -1].numpy().tolist()
+    
+    # expected survival time from f_j: \sum(f_j * mid_values_j)
+    values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
+    ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
     ind_sv_e = ind_sv_e.numpy().tolist()
+
     x_phi = x_phi.numpy().tolist()
     x = zip(x_phi, ind_st, ind_sv_e)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
-        return {'hazard': one[0], 'survival time 2': one[1], 'survival time': one[2]}
+        return {'hazard': one[0], 'survival time 2': one[2], 'survival time': one[1]}
 
     ret = [fn(one) for one in x]
 
@@ -280,6 +281,10 @@ def report_survival_time(**config):
         pass
 
     # for CI
+    hazard = merge_df['pred_hazard']
+    hazard = [[float(i) for i in o.strip()[1:-1].replace(',', '').split()] for o in hazard]
+    hazard
+
     trans = config['labtrans']
     events = np.array((merge_df['event']))
     gt_idx, _ = trans.transform(merge_df['gt_sv'], events)
