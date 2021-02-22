@@ -207,3 +207,18 @@ class SurvivalHazardDiscreteFn:
 
         ret = np.array(ret, dtype=np.float32)
         return ret
+
+
+class SurvivalHazardDiscreteRegFn(SurvivalHazardDiscreteFn):
+    """
+    This class extend SurvivalHazardDiscreteFn and separated the output to two part. Using for parallel loss func,
+    e.g. MultiTaskVAELoss
+    """
+
+    def __init__(self, labtrans, **kwargs):
+        super(SurvivalHazardDiscreteRegFn, self).__init__(labtrans=labtrans, **kwargs)
+
+    def __call__(self, x, *args, **kwargs):
+        out = super(SurvivalHazardDiscreteRegFn, self).__call__(x=x, *args, **kwargs)
+        b = out[2:3]  # third element is duration in real (original)
+        return [out, b]
