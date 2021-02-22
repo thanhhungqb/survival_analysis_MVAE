@@ -21,7 +21,8 @@ class LossAELogHaz(nn.Module):
         self.loss_surv = NLLLogistiHazardLoss()
 
     def forward(self, phi, target_loghaz):
-        idx_durations, events = target_loghaz
+        idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
+        idx_durations = idx_durations.type(torch.int64)
         loss_surv = self.loss_surv(phi, idx_durations, events)
 
         return loss_surv
@@ -234,18 +235,61 @@ def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
     x_phi = torch.log(h_j) - torch.log(1 - h_j)
 
     ind_st = ele[:, -1].numpy().tolist()
-    
+
     # expected survival time from f_j: \sum(f_j * mid_values_j)
-    values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-    ind_sv_e = ind_sv_e.numpy().tolist()
+    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
+    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
+    # ind_sv_e = ind_sv_e.numpy().tolist()
 
     x_phi = x_phi.numpy().tolist()
-    x = zip(x_phi, ind_st, ind_sv_e)
+    x = zip(x_phi, ind_st, ind_st)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
         return {'hazard': one[0], 'survival time 2': one[2], 'survival time': one[1]}
+
+    ret = [fn(one) for one in x]
+
+    return ret
+
+
+def surv_ppp_merge_hazard_st_single_fn(batch_tensor, **config):
+    """ just override surv_ppp_merge_hazard_sm_st_fn with only 1 element (as DNN)"""
+    return surv_ppp_merge_hazard_sm_st_fn([batch_tensor, None], **config)
+
+
+def surv_ppp_merge_hazard_sm_st_fn2(batch_tensor, **config):
+    """
+    output from MultiDecoderVAE with only one second_decoder
+    [[bs, n_hazard+1]]"""
+    esp = 1e-6
+
+    ind_st = batch_tensor[1].cpu().detach()
+
+    # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
+    phi = batch_tensor[0].cpu().detach()
+    f_j = torch.softmax(phi, dim=-1)
+    s_j = cumsum_rev(f_j) + esp
+    h_j = f_j / s_j
+
+    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
+    h_j = h_j + esp
+    x_phi = torch.log(h_j) - torch.log(1 - h_j)
+
+    # ind_st = ele[:, -1].numpy().tolist()
+
+    # expected survival time from f_j: \sum(f_j * mid_values_j)
+    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
+    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
+    # ind_sv_e = ind_sv_e.numpy().tolist()
+
+    ind_st = ind_st.numpy().tolist()
+    x_phi = x_phi.numpy().tolist()
+    x = zip(x_phi, ind_st, ind_st)
+
+    # for easy to use, separated n_hazard and survival time predict and named it
+    def fn(one):
+        return {'hazard': one[0], 'survival time 2': one[2], 'survival time': one[1][0]}
 
     ret = [fn(one) for one in x]
 
@@ -332,3 +376,26 @@ def default_mae_mse(df):
     ret = sum(ae * df['event']) / sum(df['event']), math.sqrt(mse)
 
     return ret
+
+
+def report_file_to_df(data_lines, lines=None, labels=None):
+    """
+    From report file to dataframe.
+    Usage:
+        df_mv = report_file_to_df(lines, (102, 112), labels=['', 'x', '', '','','CI'])
+        df_mv['CI'] = pd.to_numeric(df_mv['CI'])
+        ...
+
+    :param data_lines: read line by line from report, separated by \t
+    :param lines: pair start and stop line count from zero
+    :param labels: list
+    :return: 
+    """
+    s, e = lines if lines is not None else (0, -1)
+    selected_lines = data_lines[s:e]
+    selected_lines = [o.strip().split('\t') for o in selected_lines]
+
+    df = pd.DataFrame(selected_lines)
+
+    if labels is not None: df.columns = labels
+    return df
