@@ -6,6 +6,7 @@ import math
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 from lifelines.utils import concordance_index
 from pycox.models.loss import NLLLogistiHazardLoss
@@ -13,6 +14,46 @@ from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
 from prlab.torch.utils import cumsum_rev
 from prlab_medical.data_loader import event_norm
+
+
+class MSELossFilter:
+    """
+    see `MSELossE`
+    Filter of mse, target = [bs, 2], the second value is filter 1/0
+    Using in censoring data.
+    If data is non-censoring => 1 => count
+    if data is censoring => 0 => count if right-censoring and flag and pred < taget
+    """
+
+    def __init__(self, **kwargs):
+        self.base = nn.MSELoss
+        self.right_censoring_loss = kwargs.get('right_censoring_loss', False)
+
+    def __call__(self, pred, target, **kwargs):
+        return self.forward(pred, target, **kwargs)
+
+    def forward(self, pred, target, **kwargs):
+        ret = F.mse_loss(pred, target[:, 0:1], reduction='none')
+        events = target[:, 1]
+
+        device = target.device
+        with torch.no_grad():
+            n_sample = target.size()[0]
+            zeros = torch.tensor([0.] * n_sample).to(device)
+            ones = torch.tensor([1.] * n_sample).to(device)
+            have_count = torch.where(events > 0, ones, zeros)
+            flag_lt = torch.where(pred < target[:, 0], ones, zeros)
+            hs3 = torch.where(have_count + flag_lt > 0, ones, zeros)
+            have_count = hs3 if self.right_censoring_loss else have_count
+
+        loss = torch.sum(ret * have_count) / torch.sum(have_count)
+
+        return loss.mean()
+
+
+class MSELossWithRightCensoring(MSELossFilter):
+    def __init__(self, **kwargs):
+        super(MSELossWithRightCensoring, self).__init__(**{**kwargs, 'right_censoring_loss': True})
 
 
 class LossAELogHaz(nn.Module):
@@ -343,6 +384,21 @@ def report_survival_time(**config):
     }
 
     return config
+
+
+def surv2interpolation(s, sub=10):
+    """ s tensor [bs,out_dim]
+        see `pycox.models.interpolation.InterpolateDiscrete._surv_const_pdf`
+    """
+    n, m = s.shape
+    device = s.device
+    diff = (s[:, 1:] - s[:, :-1]).contiguous().view(-1, 1).repeat(1, sub).view(n, -1)
+    rho = torch.linspace(0, 1, sub + 1, device=device)[:-1].contiguous().repeat(n, m - 1)
+    s_prev = s[:, :-1].contiguous().view(-1, 1).repeat(1, sub).view(n, -1)
+    surv = torch.zeros(n, int((m - 1) * sub + 1))
+    surv[:, :-1] = diff * rho + s_prev
+    surv[:, -1] = s[:, -1]
+    return surv.cpu().detach()
 
 
 def mae_non_censoring_only(df):
