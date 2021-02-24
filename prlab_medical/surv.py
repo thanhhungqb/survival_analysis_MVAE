@@ -6,14 +6,35 @@ import math
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
+import torchtuples as tt
 from lifelines.utils import concordance_index
+from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
 from prlab.torch.utils import cumsum_rev
 from prlab_medical.data_loader import event_norm
+
+
+class LogisticHazardE(LogisticHazard):
+    """
+    Extend LogisticHazard to implement pmf
+    see `pycox.models.loss.nll_logistic_hazard`
+    phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi).
+    """
+
+    def __init__(self, net, optimizer=None, device=None, duration_index=None, loss=None, **kwargs):
+        super().__init__(net=net, optimizer=optimizer, loss=loss, device=device, duration_index=duration_index)
+
+    def predict_pmf(self, input, batch_size=8224, numpy=None, eval_=True, to_cpu=False,
+                    num_workers=0, epsilon=1e-7):
+        hazard = self.predict_hazard(input, batch_size, False, eval_, to_cpu, num_workers)
+        surv = (1 - hazard).add(epsilon).log().cumsum(1).exp()
+
+        pmf = hazard * surv
+        return tt.utils.array_or_tensor(pmf, numpy, input)
 
 
 class MSELossFilter:
