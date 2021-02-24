@@ -419,7 +419,7 @@ def surv2interpolation(s, sub=10):
     surv = torch.zeros(n, int((m - 1) * sub + 1))
     surv[:, :-1] = diff * rho + s_prev
     surv[:, -1] = s[:, -1]
-    return surv.cpu().detach()
+    return surv
 
 
 def mae_non_censoring_only(df):
