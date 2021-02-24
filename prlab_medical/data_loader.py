@@ -222,3 +222,13 @@ class SurvivalHazardDiscreteRegFn(SurvivalHazardDiscreteFn):
         out = super(SurvivalHazardDiscreteRegFn, self).__call__(x=x, *args, **kwargs)
         b = out[2:3]  # third element is duration in real (original)
         return [out, b]
+
+
+class SurvivalHazardDiscreteRegFilterFn(SurvivalHazardDiscreteFn):
+    def __init__(self, labtrans, **kwargs):
+        super(SurvivalHazardDiscreteRegFilterFn, self).__init__(labtrans, **kwargs)
+
+    def __call__(self, x, *args, **kwargs):
+        out = super(SurvivalHazardDiscreteRegFilterFn, self).__call__(x=x, *args, **kwargs)
+        b = out[2:]  # third element is duration in real (original)
+        return [out, b]
