@@ -1,6 +1,16 @@
 import json
+from pathlib import Path
 
+"""
+A data map is required.
+It should have fixed name and inside config folder (or sub-folder)
+"""
+
+# dynamic find constants file in config folder
 MAP_FILE_NAME = 'config/medicine-data-map.json'
+for pp in Path('config').rglob('medicine-data-map.json'):
+    MAP_FILE_NAME = str(pp)
+
 with open(MAP_FILE_NAME) as fp:
     jmap = json.load(fp=fp)
     consts = jmap['constants']
