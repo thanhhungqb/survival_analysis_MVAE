@@ -130,56 +130,41 @@ class LossHazClsInd(LossLogHazInd):
     Loss include several part: NLLLogistiHazardLoss, cross entropy, MSE of ind reg and MSE of ind infer from f_j
 
     Task Haz + Individual reg, size (T+1)
-    Note: different meaning of phi with LossLogHazInd as bellow
-        phi {torch.tensor} -- Estimates in (-inf, inf), and softmax => f_j = p(T=t_j)
-        S_j = S(t_j) = p(T >= t_j) = cumsum(f_j) # reverse
-        h_j = h(t_j) = p(T = t_j | T >= t_j) = f_j / S_j
+    Note: same meaning of phi with LossLogHazInd (raw of hazard, before sigmoid)
+    surv (S) and pmf (f) are inference from hazard
     """
 
     def __init__(self, alpha=0.5, **kwargs):
         super().__init__(alpha=alpha, **kwargs)
 
+        self.loss_ind = MSELossFilter(**kwargs)
+
         cuts = kwargs['cuts']  # using fixed cuts values
         self.cuts = cuts  # 0: c0-c1, 1: c1-c2, ..., i: ci-c(i+1)...
         self.mid_values = [0.5 * (cuts[i] + cuts[i + 1]) for i in range(len(cuts) - 1)]
-        self.mid_values.append(cuts[-1] + 0.5 * (cuts[-2] + cuts[-1]))  # last value is base on previous
+        self.mid_values.append(cuts[-1] + 0.5 * (cuts[-1] - cuts[-2]))  # fixed last value is base on previous
         self.mid_values = torch.tensor(self.mid_values)
 
     def forward(self, phi, target_loghaz):
         phi, ind_sv = phi[:, :-1], phi[:, -1]
         device = phi.device
-        esp = 1e-6
 
         idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
         idx_durations = idx_durations.type(torch.int64)
         t_ind_sv, t_org_event = target_loghaz[:, 2], target_loghaz[:, 3]
 
-        f_j = torch.softmax(phi, dim=-1)
-        s_j = cumsum_rev(f_j) + esp
-        h_j = f_j / s_j
+        h_j, s_j, f_j = hsf_from_phi(phi=phi)
 
         # expected survival time from f_j: \sum(f_j * mid_values_j)
         values_dev = self.mid_values.to(device=device)  # move to correct device
         ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
 
-        # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-        h_j = h_j + esp
-        x_phi = torch.log(h_j) - torch.log(1 - h_j)
-        loss_surv = self.loss_surv(x_phi, idx_durations, events)
+        loss_surv = self.loss_surv(phi, idx_durations, events)
         loss_surv_ce = None  # TODO CE(f_j, idx_durations)
 
-        # mse only for event
-        with torch.no_grad():
-            n_sample = phi.size()[0]
-            zeros = torch.tensor([0.] * n_sample).to(device)
-            ones = torch.tensor([1.] * n_sample).to(device)
-            hs = torch.where(t_org_event > 0, ones, zeros)
-
-        se = (ind_sv - t_ind_sv) * (ind_sv - t_ind_sv)
-        loss_mse = torch.sum(se * hs) / torch.sum(hs)
-
-        se_e = (ind_sv_e - t_ind_sv) * (ind_sv_e - t_ind_sv)
-        loss_mse_e = torch.sum(se_e * hs) / torch.sum(hs)
+        # mse only for event and/or right-censoring
+        loss_mse = self.loss_ind(ind_sv, target=target_loghaz[2:])
+        loss_mse_e = self.loss_ind(ind_sv_e, target=target_loghaz[2:])
 
         # TODO loss = loss_surv + loss_surv_ce + loss_mse + loss_mse_e
         # loss = loss_surv * self.alpha + loss_mse * (1 - self.alpha)
@@ -284,27 +269,16 @@ def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
     """
     output from MultiDecoderVAE with only one second_decoder
     [[bs, n_hazard+1]]"""
-    esp = 1e-6
     ele = batch_tensor[0].cpu().detach()
     # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
     phi = ele[:, :-1]
-    f_j = torch.softmax(phi, dim=-1)
-    s_j = cumsum_rev(f_j) + esp
-    h_j = f_j / s_j
-
-    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-    h_j = h_j + esp
-    x_phi = torch.log(h_j) - torch.log(1 - h_j)
-
     ind_st = ele[:, -1].numpy().tolist()
 
-    # expected survival time from f_j: \sum(f_j * mid_values_j)
-    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-    # ind_sv_e = ind_sv_e.numpy().tolist()
+    # expected survival time
+    ind_sv_e = expectation_of_life(phi=phi, **config).numpy().tolist()
 
-    x_phi = x_phi.numpy().tolist()
-    x = zip(x_phi, ind_st, ind_st)
+    phi = phi.numpy().tolist()
+    x = zip(phi, ind_st, ind_st)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
@@ -324,30 +298,15 @@ def surv_ppp_merge_hazard_sm_st_fn2(batch_tensor, **config):
     """
     output from MultiDecoderVAE with only one second_decoder
     [[bs, n_hazard+1]]"""
-    esp = 1e-6
-
     ind_st = batch_tensor[1].cpu().detach()
-
-    # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
     phi = batch_tensor[0].cpu().detach()
-    f_j = torch.softmax(phi, dim=-1)
-    s_j = cumsum_rev(f_j) + esp
-    h_j = f_j / s_j
 
-    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-    h_j = h_j + esp
-    x_phi = torch.log(h_j) - torch.log(1 - h_j)
-
-    # ind_st = ele[:, -1].numpy().tolist()
-
-    # expected survival time from f_j: \sum(f_j * mid_values_j)
-    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-    # ind_sv_e = ind_sv_e.numpy().tolist()
+    # expected survival time
+    ind_sv_e = expectation_of_life(phi, **config).numpy().tolist()
 
     ind_st = ind_st.numpy().tolist()
-    x_phi = x_phi.numpy().tolist()
-    x = zip(x_phi, ind_st, ind_st)
+    phi = phi.numpy().tolist()
+    x = zip(phi, ind_st, ind_sv_e)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
@@ -476,3 +435,36 @@ def report_file_to_df(data_lines, lines=None, labels=None):
 
     if labels is not None: df.columns = labels
     return df
+
+
+def hsf_from_phi(phi, eps=1e-7):
+    """
+    :param phi: phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi).
+    :param eps:
+    :return: hazard, survival function and pmf
+    """
+    h_j = torch.sigmoid(phi)
+    s_j = (1 - h_j).add(eps).log().cumsum(1).exp()
+    f_j = h_j * s_j
+    return h_j, s_j, f_j
+
+
+def expectation_of_life(phi, **config):
+    """
+    expectation of life from f_j (or s_j)
+    :param phi: phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi).
+    :param config:
+    :return: tensor [bs, 1] or [bs]
+    """
+    h_j, s_j, f_j = hsf_from_phi(phi=phi)
+    dev = phi.device
+
+    mid_values = config.get('mid_values')
+    if mid_values is None:
+        xtmp = config['cuts'][-1] * 2 - config['cuts'][-2]
+        mid_values = list((np.array(config['cuts']) + np.array(config['cuts'][1:] + [xtmp])) / 2)
+
+    mid_values = torch.tensor(mid_values, device=dev)
+
+    exp = torch.sum(f_j * mid_values, dim=-1)  # bs
+    return exp
