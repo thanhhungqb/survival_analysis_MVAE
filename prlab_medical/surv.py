@@ -14,7 +14,6 @@ from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
-from prlab.torch.utils import cumsum_rev
 from prlab_medical.data_loader import event_norm
 
 
@@ -278,7 +277,7 @@ def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
     ind_sv_e = expectation_of_life(phi=phi, **config).numpy().tolist()
 
     phi = phi.numpy().tolist()
-    x = zip(phi, ind_st, ind_st)
+    x = zip(phi, ind_st, ind_sv_e)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
