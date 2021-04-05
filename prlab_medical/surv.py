@@ -36,7 +36,7 @@ class LogisticHazardE(LogisticHazard):
         return tt.utils.array_or_tensor(pmf, numpy, input)
 
 
-class MSELossFilter:
+class MSELossFilter(nn.Module):
     """
     see `MSELossE`
     Filter of mse, target = [bs, 2], the second value is filter 1/0
@@ -46,6 +46,7 @@ class MSELossFilter:
     """
 
     def __init__(self, **kwargs):
+        super(MSELossFilter, self).__init__()
         self.base = nn.MSELoss
         self.right_censoring_loss = kwargs.get('right_censoring_loss', False)
 
