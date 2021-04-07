@@ -2,7 +2,9 @@
 Implement some function related to survival analysis
 """
 import math
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -10,11 +12,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchtuples as tt
 from lifelines.utils import concordance_index
+from pycox.evaluation import EvalSurv
 from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
+from sklearn.preprocessing import StandardScaler
+from sklearn_pandas import DataFrameMapper
 
 from prlab.model.vae import MultiDecoderVAE
+from prlab_medical.data_loader import data_loader_to_df_mix
 from prlab_medical.data_loader import event_norm
 
 
@@ -397,6 +403,70 @@ def report_survival_time(**config):
         'CI': ci_val
     }
 
+    return config
+
+
+def report_from_mvae(**config):
+    # get report for some basic info MAE, MSE, ...
+    xout = report_survival_time(**config)['out']
+
+    # this model for report only, infer from MVAE
+    model = LogisticHazardE(net=SurvFromMVAE(mvae_net=config['model']),
+                            optimizer=tt.optim.Adam(0.01),
+                            duration_index=config['labtrans'].cuts,
+                            loss=NLLLogistiHazardLoss())
+
+    df_test = data_loader_to_df_mix(config['data_test'], **config)
+
+    # custom header for our task, TODO fix hard code number of cat and cont
+    cols_leave = [f"cat_{i}" for i in range(5)] + [f"cont_{i}" for i in range(6)]
+    cols_standardize = []
+
+    standardize = [([col], StandardScaler()) for col in cols_standardize]
+    leave = [(col, None) for col in cols_leave]
+
+    x_mapper = DataFrameMapper(standardize + leave)
+
+    # we do not need it and it does not affect results
+    x_mapper.fit_transform(df_test).astype('float32')  # x_train
+    x_test = x_mapper.transform(df_test).astype('float32')
+
+    durations_test, events_test = df_test['label_other_0'].values, df_test['event'].values
+
+    surv = model.interpolate(10).predict_surv_df(x_test)
+
+    # TODO draw below graph to file and make value to configure or file
+    sample_case_ids = config.get('sample_case_ids', [37, 29, 0, 9])
+    cp = Path(config.get('cp', '.'))
+    surv.iloc[:, sample_case_ids].plot(drawstyle='steps-post')
+    plt.ylabel('S(t | x)')
+    _ = plt.xlabel('Time')
+    plt.savefig(cp / 'sample_cases.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+    plt.clf()
+
+    out = {}
+    # evaluateion
+    ev = EvalSurv(surv, durations_test, events_test, censor_surv='km')
+    out['CI'] = ev.concordance_td('antolini')
+
+    # Brier Score
+    time_grid = np.linspace(durations_test.min(), durations_test.max(), 100)
+    ev.brier_score(time_grid).plot()
+    plt.ylabel('Brier score'), plt.xlabel('Time')
+    plt.savefig(cp / 'Brier-score.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+    plt.clf()
+
+    # Negative binomial log-likelihood
+    ev.nbll(time_grid).plot()
+    plt.ylabel('NBLL'), plt.xlabel('Time')
+    plt.savefig(cp / 'NBLL.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+
+    # Integrated scores
+    out['brier_score'] = ev.integrated_brier_score(time_grid)
+    out['nbll'] = ev.integrated_nbll(time_grid)
+
+    xout.update(out)
+    config['out'] = xout
     return config
 
 
