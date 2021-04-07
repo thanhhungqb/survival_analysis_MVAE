@@ -14,7 +14,41 @@ from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 
+from prlab.model.vae import MultiDecoderVAE
 from prlab_medical.data_loader import event_norm
+
+
+class SurvFromMVAE(nn.Module):
+    """
+    from MVAE to get only surv (phi)
+    This predict version support for only single x instead x_cat, x_cont
+    Data input are in form of [cat,..., cat, cont, cont]
+    Should separated cat anc cont before pass to model.
+    To adapt with `pycox.models.logistic_hazard.LogisticHazard` and input from dataframe.
+    Note: order of the input should be fix as above
+    """
+
+    def __init__(self, mvae_net, **kwargs):
+        super(SurvFromMVAE, self).__init__()
+
+        self.mvae_net = mvae_net
+
+    def predict(self, x, **kwargs):
+        self.n_cat = 5  # TODO fix hard code
+        x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
+        x_cat = x_cat.long()
+
+        store_mode = self.mvae_net.output_mode
+        self.mvae_net.output_mode = MultiDecoderVAE.TEST_MODE
+        ret = self.mvae_net(x_cat, x_cont, **kwargs)
+        phi = ret[1][0]
+        self.mvae_net.output_mode = store_mode
+        phi = phi.contiguous()
+        return phi
+        # return self.mvae_net.forward(x_cat, x_cont, **kwargs)
+
+    def __repr__(self):
+        return f"SurvFromMVAE ( {str(self.mvae_net)} )"
 
 
 class LogisticHazardE(LogisticHazard):
