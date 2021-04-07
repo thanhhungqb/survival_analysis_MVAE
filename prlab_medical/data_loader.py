@@ -260,7 +260,7 @@ def data_loader_to_df_mix(dl, **config):
             label = label[0]  # first element is important in form tensor [2 or 4]
 
         lbl_npy = label.cpu().numpy()
-        data.append(np.concatenate((x_cont, x_cat, lbl_npy), axis=1))
+        data.append(np.concatenate((x_cat, x_cont, lbl_npy), axis=1))
 
     header = [f"cat_{i}" for i in range(cat_len)] + [f"cont_{i}" for i in range(cont_len)] + ['duration', 'event']
     header = header + [f"label_other_{i}" for i in range(data[0].shape[-1] - len(header))]
