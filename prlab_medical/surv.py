@@ -38,9 +38,9 @@ class SurvFromMVAE(nn.Module):
         super(SurvFromMVAE, self).__init__()
 
         self.mvae_net = mvae_net
+        self.n_cat = len(kwargs['cat_names'])
 
     def predict(self, x, **kwargs):
-        self.n_cat = 5  # TODO fix hard code
         x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
         x_cat = x_cat.long()
 
@@ -55,6 +55,21 @@ class SurvFromMVAE(nn.Module):
 
     def __repr__(self):
         return f"SurvFromMVAE ( {str(self.mvae_net)} )"
+
+
+class SurvFromDNN(nn.Module):
+    def __init__(self, dnn, **kwargs):
+        super(SurvFromDNN, self).__init__()
+        self.dnn = dnn
+        self.sep = kwargs.get('dnn_output_sep', [-1])
+        self.n_cat = len(kwargs['cat_names'])
+
+    def predict(self, x, **kwargs):
+        x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
+        x_cat = x_cat.long()
+
+        ret = self.dnn(x_cat, x_cont, **kwargs)
+        return ret[:, :self.sep[0]].contiguous()
 
 
 class LogisticHazardE(LogisticHazard):
@@ -406,16 +421,38 @@ def report_survival_time(**config):
     return config
 
 
+def report_from_dnn(**config):
+    model = LogisticHazardE(
+        net=SurvFromDNN(dnn=config['model'], **config),
+        optimizer=tt.optim.Adam(0.01),
+        duration_index=config['labtrans'].cuts,
+        loss=NLLLogistiHazardLoss()
+    )
+
+    out = report_from_logistic_hazard(**{**config, 'model': model})
+    config['out'] = out['out']
+    return config
+
+
 def report_from_mvae(**config):
+    # this model for report only, infer from MVAE
+    model = LogisticHazardE(
+        net=SurvFromMVAE(mvae_net=config['model'], **config),
+        optimizer=tt.optim.Adam(0.01),
+        duration_index=config['labtrans'].cuts,
+        loss=NLLLogistiHazardLoss()
+    )
+
+    out = report_from_logistic_hazard(**{**config, 'model': model})
+    config['out'] = out['out']
+    return config
+
+
+def report_from_logistic_hazard(**config):
     # get report for some basic info MAE, MSE, ...
     xout = report_survival_time(**config)['out']
 
-    # this model for report only, infer from MVAE
-    model = LogisticHazardE(net=SurvFromMVAE(mvae_net=config['model']),
-                            optimizer=tt.optim.Adam(0.01),
-                            duration_index=config['labtrans'].cuts,
-                            loss=NLLLogistiHazardLoss())
-
+    model = config['model']
     df_test = data_loader_to_df_mix(config['data_test'], **config)
 
     # custom header for our task, TODO fix hard code number of cat and cont
@@ -435,7 +472,7 @@ def report_from_mvae(**config):
 
     surv = model.interpolate(10).predict_surv_df(x_test)
 
-    # TODO draw below graph to file and make value to configure or file
+    # draw below graph to file and make value to configure or file
     sample_case_ids = config.get('sample_case_ids', [37, 29, 0, 9])
     cp = Path(config.get('cp', '.'))
     surv.iloc[:, sample_case_ids].plot(drawstyle='steps-post')
