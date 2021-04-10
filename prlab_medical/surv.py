@@ -449,6 +449,11 @@ def report_from_mvae(**config):
 
 
 def report_from_logistic_hazard(**config):
+    """
+    See more about report: https://github.com/havakv/pycox/blob/master/examples/03_network_architectures.ipynb
+    :param config:
+    :return:
+    """
     # get report for some basic info MAE, MSE, ...
     xout = report_survival_time(**config)['out']
 
