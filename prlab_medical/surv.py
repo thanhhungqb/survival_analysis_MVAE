@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torchtuples as tt
 from lifelines.utils import concordance_index
 from pycox.evaluation import EvalSurv
-from pycox.models import LogisticHazard
+from pycox.models import LogisticHazard, CoxCC
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 from sklearn.preprocessing import StandardScaler
@@ -315,18 +315,23 @@ def cox_based_pipe(**config):
     val = tt.tuplefy(x_val, y_val)
 
     # there are two model to get, CoxTime and CoxPH
+    in_features = x_train.shape[1]
+    out_features = config.get('out_features', 1)
     num_nodes = config.get('layers', [128, 128])
     batch_norm = config.get('batch_norm', False)
     dropout = config.get('dropout', 0.1)
+    output_bias = config.get('output_bias', False)
     if config['model'] == 'CoxTime':
-        in_features = x_train.shape[1]
         net = MLPVanillaCoxTime(in_features, num_nodes, batch_norm, dropout)
         model = CoxTime(net, tt.optim.Adam, labtrans=labtrans)
+
+    elif config['model'] == 'CoxCC':
+        net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
+                                      dropout, output_bias=output_bias)
+        model = CoxCC(net, tt.optim.Adam)
+        
     else:
-        # now only support CoxPH here, maybe extend later
-        in_features = x_train.shape[1]
-        out_features = 1
-        output_bias = False
+        # CoxPH here
         net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
                                       dropout, output_bias=output_bias)
         model = CoxPH(net, tt.optim.Adam)
