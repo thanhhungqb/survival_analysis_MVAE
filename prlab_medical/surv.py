@@ -477,6 +477,28 @@ def report_from_logistic_hazard(**config):
 
     surv = model.interpolate(10).predict_surv_df(x_test)
 
+    out = report_from_surv(**{
+        **config,
+        'surv': surv,
+        'durations_test': durations_test,
+        'events_test': events_test
+    })['out']
+
+    xout.update(out)
+    config['out'] = xout
+    return config
+
+
+def report_from_surv(**config):
+    """
+    Report from surv predicted and test data in *_test
+    :param config:
+    :return:
+    """
+    # should pass from outside
+    surv = config['surv']
+    durations_test, events_test = config['durations_test'], config['events_test']
+
     # draw below graph to file and make value to configure or file
     sample_case_ids = config.get('sample_case_ids', [37, 29, 0, 9])
     cp = Path(config.get('cp', '.'))
@@ -486,7 +508,7 @@ def report_from_logistic_hazard(**config):
     plt.savefig(cp / 'sample_cases.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
     plt.clf()
 
-    out = {}
+    out = {'MAE': 0, 'MSE': 0, 'default_mae_mse': 0}
     # evaluateion
     ev = EvalSurv(surv, durations_test, events_test, censor_surv='km')
     out['CI'] = ev.concordance_td('antolini')
@@ -507,8 +529,7 @@ def report_from_logistic_hazard(**config):
     out['brier_score'] = ev.integrated_brier_score(time_grid)
     out['nbll'] = ev.integrated_nbll(time_grid)
 
-    xout.update(out)
-    config['out'] = xout
+    config['out'] = out
     return config
 
 
