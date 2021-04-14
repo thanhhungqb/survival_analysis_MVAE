@@ -23,6 +23,9 @@ from prlab.model.vae import MultiDecoderVAE
 from prlab_medical.data_loader import data_loader_to_df_mix
 from prlab_medical.data_loader import event_norm
 
+from pycox.models import CoxTime, CoxPH
+from pycox.models.cox_time import MLPVanillaCoxTime
+
 
 class SurvFromMVAE(nn.Module):
     """
@@ -269,6 +272,91 @@ class LabelTransform:
         :return: form (array([10]), array([1.], dtype=float32)), should convert to correct label before pass
         """
         return self.trans.transform(durations, events)
+
+
+def cox_based_pipe(**config):
+    """
+    Training with CoxTime or CoxPh
+    :param config:
+    :return:
+    """
+    df_train, df_val, df_test = config['train_df'], config['valid_df'], config['test_df']
+
+    def is_from_cat(name):
+        for cat in config['cat_names']:
+            if cat in name:
+                return True
+
+        return False
+
+    cols_standardize = config['cont_names']
+    cols_leave = [o for o in df_train.columns if is_from_cat(o)]  # from cat to multi-column
+
+    is_normalize_cont = config.get('is_normalize_cont', False)
+    standardize = [([col], StandardScaler() if is_normalize_cont else None) for col in cols_standardize]
+    leave = [(col, None) for col in cols_leave]
+
+    x_mapper = DataFrameMapper(standardize + leave)
+
+    x_train = x_mapper.fit_transform(df_train).astype('float32')
+    x_val = x_mapper.transform(df_val).astype('float32')
+    x_test = x_mapper.transform(df_test).astype('float32')
+
+    labtrans = CoxTime.label_transform()
+
+    # get_target = lambda df: (df['Survival.time'].values, df['Deadstatus.event'].values)
+    def get_target1(df):
+        df[df['Deadstatus.event'] == 9] = 0
+        return df['Survival.time'].values, df['Deadstatus.event'].values
+
+    y_train = labtrans.fit_transform(*get_target1(df_train))
+    y_val = labtrans.transform(*get_target1(df_val))
+    durations_test, events_test = get_target1(df_test)
+    val = tt.tuplefy(x_val, y_val)
+
+    # there are two model to get, CoxTime and CoxPH
+    num_nodes = config.get('layers', [128, 128])
+    batch_norm = config.get('batch_norm', False)
+    dropout = config.get('dropout', 0.1)
+    if config['model'] == 'CoxTime':
+        in_features = x_train.shape[1]
+        net = MLPVanillaCoxTime(in_features, num_nodes, batch_norm, dropout)
+        model = CoxTime(net, tt.optim.Adam, labtrans=labtrans)
+    else:
+        # now only support CoxPH here, maybe extend later
+        in_features = x_train.shape[1]
+        out_features = 1
+        output_bias = False
+        net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
+                                      dropout, output_bias=output_bias)
+        model = CoxPH(net, tt.optim.Adam)
+
+    # lrfinder = model.lr_finder(x_train, y_train, config['bs'], tolerance=2)
+    # _ = lrfinder.plot()
+    # lrfinder.get_best_lr()
+
+    model.optimizer.set_lr(config.get('lr', 1e-2))
+
+    callbacks = [tt.callbacks.EarlyStopping()]
+    verbose = True
+
+    model.fit(x_train, y_train, config['bs'], config['epochs'], callbacks, verbose,
+              val_data=val.repeat(10).cat())
+
+    # _ = log.plot()
+    model.partial_log_likelihood(*val).mean()
+    _ = model.compute_baseline_hazards()
+
+    surv = model.predict_surv_df(x_test)
+    durations_test, events_test = durations_test.astype(np.int32), events_test.astype(np.int32)
+
+    config.update({
+        'surv': surv,
+        'durations_test': durations_test,
+        'events_test': events_test
+    })
+
+    return report_from_surv(**config)
 
 
 def train_valid_filter(**config):
