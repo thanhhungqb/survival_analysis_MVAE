@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from scipy.stats import norm
 from torch.utils.data import Dataset
 
@@ -232,3 +233,38 @@ class SurvivalHazardDiscreteRegFilterFn(SurvivalHazardDiscreteFn):
         out = super(SurvivalHazardDiscreteRegFilterFn, self).__call__(x=x, *args, **kwargs)
         b = out[2:]  # third element is duration in real (original)
         return [out, b]
+
+
+def data_loader_to_df_mix(dl, **config):
+    """
+    Convert from dataloader to Dataframe.
+    Only for tabular data with mix of categorical and continuous data type
+    In case of mix categorical and continuous value, then return form [cat1, cat2, ..., catn, cont...]
+    all cat_i is integer from labtrans.
+    Using together with  `pycox.models.logistic_hazard.LogisticHazard`
+    :param dl: data loader return (x_cat, x_cont), [(duration, event, ...), ...]
+    :param config:
+    :return:
+    """
+    data = []
+    cat_len, cont_len = 0, 0
+    for single_batch in dl:
+        (x_cat, x_cont), label = single_batch  # in batch mode because dl is dataloader
+        x_cat_n, x_cont_n = x_cat.shape[-1], x_cont.shape[-1]
+        if cat_len == 0:
+            cat_len, cont_len = x_cat_n, x_cont_n
+
+        assert cat_len == x_cat_n and cont_len == x_cont_n
+
+        if isinstance(label, list):
+            label = label[0]  # first element is important in form tensor [2 or 4]
+
+        lbl_npy = label.cpu().numpy()
+        data.append(np.concatenate((x_cat, x_cont, lbl_npy), axis=1))
+
+    header = [f"cat_{i}" for i in range(cat_len)] + [f"cont_{i}" for i in range(cont_len)] + ['duration', 'event']
+    header = header + [f"label_other_{i}" for i in range(data[0].shape[-1] - len(header))]
+
+    data = np.concatenate(data, axis=0)
+    df = pd.DataFrame(data=data, columns=header)
+    return df

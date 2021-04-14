@@ -2,7 +2,9 @@
 Implement some function related to survival analysis
 """
 import math
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -10,12 +12,67 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchtuples as tt
 from lifelines.utils import concordance_index
+from pycox.evaluation import EvalSurv
 from pycox.models import LogisticHazard
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
+from sklearn.preprocessing import StandardScaler
+from sklearn_pandas import DataFrameMapper
 
-from prlab.torch.utils import cumsum_rev
+from prlab.model.vae import MultiDecoderVAE
+from prlab_medical.data_loader import data_loader_to_df_mix
 from prlab_medical.data_loader import event_norm
+
+from pycox.models import CoxTime, CoxPH
+from pycox.models.cox_time import MLPVanillaCoxTime
+
+
+class SurvFromMVAE(nn.Module):
+    """
+    from MVAE to get only surv (phi)
+    This predict version support for only single x instead x_cat, x_cont
+    Data input are in form of [cat,..., cat, cont, cont]
+    Should separated cat anc cont before pass to model.
+    To adapt with `pycox.models.logistic_hazard.LogisticHazard` and input from dataframe.
+    Note: order of the input should be fix as above
+    """
+
+    def __init__(self, mvae_net, **kwargs):
+        super(SurvFromMVAE, self).__init__()
+
+        self.mvae_net = mvae_net
+        self.n_cat = len(kwargs['cat_names'])
+
+    def predict(self, x, **kwargs):
+        x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
+        x_cat = x_cat.long()
+
+        store_mode = self.mvae_net.output_mode
+        self.mvae_net.output_mode = MultiDecoderVAE.TEST_MODE
+        ret = self.mvae_net(x_cat, x_cont, **kwargs)
+        phi = ret[1][0]
+        self.mvae_net.output_mode = store_mode
+        phi = phi.contiguous()
+        return phi
+        # return self.mvae_net.forward(x_cat, x_cont, **kwargs)
+
+    def __repr__(self):
+        return f"SurvFromMVAE ( {str(self.mvae_net)} )"
+
+
+class SurvFromDNN(nn.Module):
+    def __init__(self, dnn, **kwargs):
+        super(SurvFromDNN, self).__init__()
+        self.dnn = dnn
+        self.sep = kwargs.get('dnn_output_sep', [-1])
+        self.n_cat = len(kwargs['cat_names'])
+
+    def predict(self, x, **kwargs):
+        x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
+        x_cat = x_cat.long()
+
+        ret = self.dnn(x_cat, x_cont, **kwargs)
+        return ret[:, :self.sep[0]].contiguous()
 
 
 class LogisticHazardE(LogisticHazard):
@@ -37,7 +94,7 @@ class LogisticHazardE(LogisticHazard):
         return tt.utils.array_or_tensor(pmf, numpy, input)
 
 
-class MSELossFilter:
+class MSELossFilter(nn.Module):
     """
     see `MSELossE`
     Filter of mse, target = [bs, 2], the second value is filter 1/0
@@ -47,6 +104,7 @@ class MSELossFilter:
     """
 
     def __init__(self, **kwargs):
+        super(MSELossFilter, self).__init__()
         self.base = nn.MSELoss
         self.right_censoring_loss = kwargs.get('right_censoring_loss', False)
 
@@ -130,56 +188,41 @@ class LossHazClsInd(LossLogHazInd):
     Loss include several part: NLLLogistiHazardLoss, cross entropy, MSE of ind reg and MSE of ind infer from f_j
 
     Task Haz + Individual reg, size (T+1)
-    Note: different meaning of phi with LossLogHazInd as bellow
-        phi {torch.tensor} -- Estimates in (-inf, inf), and softmax => f_j = p(T=t_j)
-        S_j = S(t_j) = p(T >= t_j) = cumsum(f_j) # reverse
-        h_j = h(t_j) = p(T = t_j | T >= t_j) = f_j / S_j
+    Note: same meaning of phi with LossLogHazInd (raw of hazard, before sigmoid)
+    surv (S) and pmf (f) are inference from hazard
     """
 
     def __init__(self, alpha=0.5, **kwargs):
         super().__init__(alpha=alpha, **kwargs)
 
+        self.loss_ind = MSELossFilter(**kwargs)
+
         cuts = kwargs['cuts']  # using fixed cuts values
         self.cuts = cuts  # 0: c0-c1, 1: c1-c2, ..., i: ci-c(i+1)...
         self.mid_values = [0.5 * (cuts[i] + cuts[i + 1]) for i in range(len(cuts) - 1)]
-        self.mid_values.append(cuts[-1] + 0.5 * (cuts[-2] + cuts[-1]))  # last value is base on previous
+        self.mid_values.append(cuts[-1] + 0.5 * (cuts[-1] - cuts[-2]))  # fixed last value is base on previous
         self.mid_values = torch.tensor(self.mid_values)
 
     def forward(self, phi, target_loghaz):
         phi, ind_sv = phi[:, :-1], phi[:, -1]
         device = phi.device
-        esp = 1e-6
 
         idx_durations, events = target_loghaz[:, 0], target_loghaz[:, 1]
         idx_durations = idx_durations.type(torch.int64)
         t_ind_sv, t_org_event = target_loghaz[:, 2], target_loghaz[:, 3]
 
-        f_j = torch.softmax(phi, dim=-1)
-        s_j = cumsum_rev(f_j) + esp
-        h_j = f_j / s_j
+        h_j, s_j, f_j = hsf_from_phi(phi=phi)
 
         # expected survival time from f_j: \sum(f_j * mid_values_j)
         values_dev = self.mid_values.to(device=device)  # move to correct device
         ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
 
-        # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-        h_j = h_j + esp
-        x_phi = torch.log(h_j) - torch.log(1 - h_j)
-        loss_surv = self.loss_surv(x_phi, idx_durations, events)
+        loss_surv = self.loss_surv(phi, idx_durations, events)
         loss_surv_ce = None  # TODO CE(f_j, idx_durations)
 
-        # mse only for event
-        with torch.no_grad():
-            n_sample = phi.size()[0]
-            zeros = torch.tensor([0.] * n_sample).to(device)
-            ones = torch.tensor([1.] * n_sample).to(device)
-            hs = torch.where(t_org_event > 0, ones, zeros)
-
-        se = (ind_sv - t_ind_sv) * (ind_sv - t_ind_sv)
-        loss_mse = torch.sum(se * hs) / torch.sum(hs)
-
-        se_e = (ind_sv_e - t_ind_sv) * (ind_sv_e - t_ind_sv)
-        loss_mse_e = torch.sum(se_e * hs) / torch.sum(hs)
+        # mse only for event and/or right-censoring
+        loss_mse = self.loss_ind(ind_sv, target=target_loghaz[2:])
+        loss_mse_e = self.loss_ind(ind_sv_e, target=target_loghaz[2:])
 
         # TODO loss = loss_surv + loss_surv_ce + loss_mse + loss_mse_e
         # loss = loss_surv * self.alpha + loss_mse * (1 - self.alpha)
@@ -229,6 +272,91 @@ class LabelTransform:
         :return: form (array([10]), array([1.], dtype=float32)), should convert to correct label before pass
         """
         return self.trans.transform(durations, events)
+
+
+def cox_based_pipe(**config):
+    """
+    Training with CoxTime or CoxPh
+    :param config:
+    :return:
+    """
+    df_train, df_val, df_test = config['train_df'], config['valid_df'], config['test_df']
+
+    def is_from_cat(name):
+        for cat in config['cat_names']:
+            if cat in name:
+                return True
+
+        return False
+
+    cols_standardize = config['cont_names']
+    cols_leave = [o for o in df_train.columns if is_from_cat(o)]  # from cat to multi-column
+
+    is_normalize_cont = config.get('is_normalize_cont', False)
+    standardize = [([col], StandardScaler() if is_normalize_cont else None) for col in cols_standardize]
+    leave = [(col, None) for col in cols_leave]
+
+    x_mapper = DataFrameMapper(standardize + leave)
+
+    x_train = x_mapper.fit_transform(df_train).astype('float32')
+    x_val = x_mapper.transform(df_val).astype('float32')
+    x_test = x_mapper.transform(df_test).astype('float32')
+
+    labtrans = CoxTime.label_transform()
+
+    # get_target = lambda df: (df['Survival.time'].values, df['Deadstatus.event'].values)
+    def get_target1(df):
+        df[df['Deadstatus.event'] == 9] = 0
+        return df['Survival.time'].values, df['Deadstatus.event'].values
+
+    y_train = labtrans.fit_transform(*get_target1(df_train))
+    y_val = labtrans.transform(*get_target1(df_val))
+    durations_test, events_test = get_target1(df_test)
+    val = tt.tuplefy(x_val, y_val)
+
+    # there are two model to get, CoxTime and CoxPH
+    num_nodes = config.get('layers', [128, 128])
+    batch_norm = config.get('batch_norm', False)
+    dropout = config.get('dropout', 0.1)
+    if config['model'] == 'CoxTime':
+        in_features = x_train.shape[1]
+        net = MLPVanillaCoxTime(in_features, num_nodes, batch_norm, dropout)
+        model = CoxTime(net, tt.optim.Adam, labtrans=labtrans)
+    else:
+        # now only support CoxPH here, maybe extend later
+        in_features = x_train.shape[1]
+        out_features = 1
+        output_bias = False
+        net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
+                                      dropout, output_bias=output_bias)
+        model = CoxPH(net, tt.optim.Adam)
+
+    # lrfinder = model.lr_finder(x_train, y_train, config['bs'], tolerance=2)
+    # _ = lrfinder.plot()
+    # lrfinder.get_best_lr()
+
+    model.optimizer.set_lr(config.get('lr', 1e-2))
+
+    callbacks = [tt.callbacks.EarlyStopping()]
+    verbose = True
+
+    model.fit(x_train, y_train, config['bs'], config['epochs'], callbacks, verbose,
+              val_data=val.repeat(10).cat())
+
+    # _ = log.plot()
+    model.partial_log_likelihood(*val).mean()
+    _ = model.compute_baseline_hazards()
+
+    surv = model.predict_surv_df(x_test)
+    durations_test, events_test = durations_test.astype(np.int32), events_test.astype(np.int32)
+
+    config.update({
+        'surv': surv,
+        'durations_test': durations_test,
+        'events_test': events_test
+    })
+
+    return report_from_surv(**config)
 
 
 def train_valid_filter(**config):
@@ -284,27 +412,16 @@ def surv_ppp_merge_hazard_sm_st_fn(batch_tensor, **config):
     """
     output from MultiDecoderVAE with only one second_decoder
     [[bs, n_hazard+1]]"""
-    esp = 1e-6
     ele = batch_tensor[0].cpu().detach()
     # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
     phi = ele[:, :-1]
-    f_j = torch.softmax(phi, dim=-1)
-    s_j = cumsum_rev(f_j) + esp
-    h_j = f_j / s_j
-
-    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-    h_j = h_j + esp
-    x_phi = torch.log(h_j) - torch.log(1 - h_j)
-
     ind_st = ele[:, -1].numpy().tolist()
 
-    # expected survival time from f_j: \sum(f_j * mid_values_j)
-    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-    # ind_sv_e = ind_sv_e.numpy().tolist()
+    # expected survival time
+    ind_sv_e = expectation_of_life(phi=phi, **config).numpy().tolist()
 
-    x_phi = x_phi.numpy().tolist()
-    x = zip(x_phi, ind_st, ind_st)
+    phi = phi.numpy().tolist()
+    x = zip(phi, ind_st, ind_sv_e)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
@@ -324,30 +441,15 @@ def surv_ppp_merge_hazard_sm_st_fn2(batch_tensor, **config):
     """
     output from MultiDecoderVAE with only one second_decoder
     [[bs, n_hazard+1]]"""
-    esp = 1e-6
-
     ind_st = batch_tensor[1].cpu().detach()
-
-    # hazards = torch.sigmoid_(ele[:, :-1]).numpy().tolist()
     phi = batch_tensor[0].cpu().detach()
-    f_j = torch.softmax(phi, dim=-1)
-    s_j = cumsum_rev(f_j) + esp
-    h_j = f_j / s_j
 
-    # x_phi = rev_sigmoid(h_j) because NLLLogistiHazardLoss need values before sigmoid
-    h_j = h_j + esp
-    x_phi = torch.log(h_j) - torch.log(1 - h_j)
-
-    # ind_st = ele[:, -1].numpy().tolist()
-
-    # expected survival time from f_j: \sum(f_j * mid_values_j)
-    # values_dev = config['loss_func'].second_loss[0].mid_values  # TODO fix hard code here
-    # ind_sv_e = torch.sum(f_j * values_dev, dim=-1)  # bs
-    # ind_sv_e = ind_sv_e.numpy().tolist()
+    # expected survival time
+    ind_sv_e = expectation_of_life(phi, **config).numpy().tolist()
 
     ind_st = ind_st.numpy().tolist()
-    x_phi = x_phi.numpy().tolist()
-    x = zip(x_phi, ind_st, ind_st)
+    phi = phi.numpy().tolist()
+    x = zip(phi, ind_st, ind_sv_e)
 
     # for easy to use, separated n_hazard and survival time predict and named it
     def fn(one):
@@ -404,6 +506,118 @@ def report_survival_time(**config):
         'CI': ci_val
     }
 
+    return config
+
+
+def report_from_dnn(**config):
+    model = LogisticHazardE(
+        net=SurvFromDNN(dnn=config['model'], **config),
+        optimizer=tt.optim.Adam(0.01),
+        duration_index=config['labtrans'].cuts,
+        loss=NLLLogistiHazardLoss()
+    )
+
+    out = report_from_logistic_hazard(**{**config, 'model': model})
+    config['out'] = out['out']
+    return config
+
+
+def report_from_mvae(**config):
+    # this model for report only, infer from MVAE
+    model = LogisticHazardE(
+        net=SurvFromMVAE(mvae_net=config['model'], **config),
+        optimizer=tt.optim.Adam(0.01),
+        duration_index=config['labtrans'].cuts,
+        loss=NLLLogistiHazardLoss()
+    )
+
+    out = report_from_logistic_hazard(**{**config, 'model': model})
+    config['out'] = out['out']
+    return config
+
+
+def report_from_logistic_hazard(**config):
+    """
+    See more about report: https://github.com/havakv/pycox/blob/master/examples/03_network_architectures.ipynb
+    :param config:
+    :return:
+    """
+    # get report for some basic info MAE, MSE, ...
+    xout = report_survival_time(**config)['out']
+
+    model = config['model']
+    df_test = data_loader_to_df_mix(config['data_test'], **config)
+
+    # custom header for our task, TODO fix hard code number of cat and cont
+    cols_leave = [f"cat_{i}" for i in range(5)] + [f"cont_{i}" for i in range(6)]
+    cols_standardize = []
+
+    standardize = [([col], StandardScaler()) for col in cols_standardize]
+    leave = [(col, None) for col in cols_leave]
+
+    x_mapper = DataFrameMapper(standardize + leave)
+
+    # we do not need it and it does not affect results
+    x_mapper.fit_transform(df_test).astype('float32')  # x_train
+    x_test = x_mapper.transform(df_test).astype('float32')
+
+    durations_test, events_test = df_test['label_other_0'].values, df_test['event'].values
+
+    surv = model.interpolate(10).predict_surv_df(x_test)
+
+    out = report_from_surv(**{
+        **config,
+        'surv': surv,
+        'durations_test': durations_test,
+        'events_test': events_test
+    })['out']
+
+    xout.update(out)
+    config['out'] = xout
+    return config
+
+
+def report_from_surv(**config):
+    """
+    Report from surv predicted and test data in *_test
+    :param config:
+    :return:
+    """
+    # should pass from outside
+    surv = config['surv']
+    durations_test, events_test = config['durations_test'], config['events_test']
+
+    # draw below graph to file and make value to configure or file
+    sample_case_ids = config.get('sample_case_ids', [37, 29, 0, 9])
+    cp = Path(config.get('cp', '.'))
+    surv.iloc[:, sample_case_ids].plot(drawstyle='steps-post')
+    plt.ylabel('S(t | x)')
+    _ = plt.xlabel('Time')
+    plt.savefig(cp / 'sample_cases.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+    plt.clf()
+
+    out = {'MAE': 0, 'MSE': 0, 'default_mae_mse': 0}
+    # evaluateion
+    ev = EvalSurv(surv, durations_test, events_test, censor_surv='km')
+    out['CI'] = ev.concordance_td('antolini')
+
+    # Brier Score
+    time_grid = np.linspace(durations_test.min(), durations_test.max(), 100)
+    ev.brier_score(time_grid).plot()
+    plt.ylabel('Brier score'), plt.xlabel('Time')
+    plt.savefig(cp / 'Brier-score.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+    plt.clf()
+
+    # Negative binomial log-likelihood
+    ev.nbll(time_grid).plot()
+    plt.ylabel('NBLL'), plt.xlabel('Time')
+    plt.savefig(cp / 'NBLL.pdf', transparent=True, bbox_inches='tight', pad_inches=0)
+
+    # Integrated scores
+    out['brier_score'] = ev.integrated_brier_score(time_grid)
+    out['nbll'] = ev.integrated_nbll(time_grid)
+
+    config['out'] = out
     return config
 
 
@@ -476,3 +690,36 @@ def report_file_to_df(data_lines, lines=None, labels=None):
 
     if labels is not None: df.columns = labels
     return df
+
+
+def hsf_from_phi(phi, eps=1e-7):
+    """
+    :param phi: phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi).
+    :param eps:
+    :return: hazard, survival function and pmf
+    """
+    h_j = torch.sigmoid(phi)
+    s_j = (1 - h_j).add(eps).log().cumsum(1).exp()
+    f_j = h_j * s_j
+    return h_j, s_j, f_j
+
+
+def expectation_of_life(phi, **config):
+    """
+    expectation of life from f_j (or s_j)
+    :param phi: phi {torch.tensor} -- Estimates in (-inf, inf), where hazard = sigmoid(phi).
+    :param config:
+    :return: tensor [bs, 1] or [bs]
+    """
+    h_j, s_j, f_j = hsf_from_phi(phi=phi)
+    dev = phi.device
+
+    mid_values = config.get('mid_values')
+    if mid_values is None:
+        xtmp = config['cuts'][-1] * 2 - config['cuts'][-2]
+        mid_values = list((np.array(config['cuts']) + np.array(config['cuts'][1:] + [xtmp])) / 2)
+
+    mid_values = torch.tensor(mid_values, device=dev)
+
+    exp = torch.sum(f_j * mid_values, dim=-1)  # bs
+    return exp
