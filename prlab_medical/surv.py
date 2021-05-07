@@ -21,6 +21,7 @@ from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 from sklearn.preprocessing import StandardScaler
 from sklearn_pandas import DataFrameMapper
 
+from prlab.common.dl import WeightByCall
 from prlab.common.utils import CategoricalEncoderPandas, convert_to_obj_or_fn
 from prlab.model.vae import MultiDecoderVAE
 from prlab_medical.data_loader import data_loader_to_df_mix
@@ -72,6 +73,7 @@ class LossMVAELogHaz(nn.Module):
         self.alpha = alpha
         self.loss_surv = NLLLogistiHazardLoss()
         self.loss_ae = nn.MSELoss()
+        self.lw = WeightByCall(n_batch=30000)
 
     def forward(self, predicted, z_mu, z_var, others, x_ret, idx_durations, events):
         # use only predicted and others in MultiDecoderVAE with train mode
@@ -79,7 +81,16 @@ class LossMVAELogHaz(nn.Module):
 
         loss_surv = self.loss_surv(phi, idx_durations, events)
         loss_ae = self.loss_ae(decoded, x_ret)
-        return self.alpha * loss_surv + (1 - self.alpha) * loss_ae
+        kl_loss = 0.5 * torch.sum(torch.exp(z_var) + z_mu ** 2 - 1.0 - z_var)
+
+        d_alpha = self.lw()
+        print('check d_alpha', d_alpha)
+
+        d_alpha = 1 - self.alpha
+        # ret = self.alpha * loss_surv + (1 - self.alpha) * (c_loss + kl_loss)
+        ret = (1 - d_alpha) * loss_surv + d_alpha * (loss_ae + kl_loss) / 2.0
+
+        return ret
 
 
 class SurvFromDNN(nn.Module):
@@ -370,9 +381,9 @@ def hazard_from_mvae_pipe(**config):
 
     metrics = dict(
         loss_surv=LossMVAELogHaz(1),
-        loss_ae=LossMVAELogHaz(0)
+        loss_vae=LossMVAELogHaz(0)
     )
-    callbacks = [tt.callbacks.EarlyStopping(), tt.callbacks.BestWeights(file_path=config['cp']/'bw.w')]
+    callbacks = [tt.callbacks.EarlyStopping(), tt.callbacks.BestWeights(file_path=config['cp'] / 'bw.w')]
     verbose = True
 
     model.fit(x_train, y_train, config['bs'], config['epochs'], callbacks, verbose,
@@ -433,8 +444,13 @@ def cox_based_pipe(**config):
         df[df['Deadstatus.event'] == 9] = 0
         return df['Survival.time'].values, df['Deadstatus.event'].values
 
-    y_train = labtrans.fit_transform(*get_target1(df_train))
-    y_val = labtrans.transform(*get_target1(df_val))
+    y_train = get_target1(df_train)
+    y_val = get_target1(df_val)
+
+    if config['model'] == 'CoxTime':
+        # only using labtrans if CoxTime
+        y_train = labtrans.fit_transform(*y_train)
+        y_val = labtrans.transform(*y_val)
     durations_test, events_test = get_target1(df_test)
     val = tt.tuplefy(x_val, y_val)
 
@@ -719,9 +735,6 @@ def report_from_logistic_hazard(**config):
     durations_test, events_test = df_test['label_other_0'].values, df_test['event'].values
 
     surv = model.interpolate(10).predict_surv_df(x_test)
-    print('test surv')
-    print(surv)
-    exit(0)
 
     out = report_from_surv(**{
         **config,
