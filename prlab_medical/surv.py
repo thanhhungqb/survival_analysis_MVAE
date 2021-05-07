@@ -13,18 +13,19 @@ import torch.nn.functional as F
 import torchtuples as tt
 from lifelines.utils import concordance_index
 from pycox.evaluation import EvalSurv
-from pycox.models import LogisticHazard
+from pycox.models import CoxTime, CoxPH
+from pycox.models import LogisticHazard, CoxCC
+from pycox.models.cox_time import MLPVanillaCoxTime
 from pycox.models.loss import NLLLogistiHazardLoss
 from pycox.preprocessing.label_transforms import LabTransDiscreteTime
 from sklearn.preprocessing import StandardScaler
 from sklearn_pandas import DataFrameMapper
 
+from prlab.common.dl import WeightByCall
+from prlab.common.utils import CategoricalEncoderPandas, convert_to_obj_or_fn
 from prlab.model.vae import MultiDecoderVAE
 from prlab_medical.data_loader import data_loader_to_df_mix
 from prlab_medical.data_loader import event_norm
-
-from pycox.models import CoxTime, CoxPH
-from pycox.models.cox_time import MLPVanillaCoxTime
 
 
 class SurvFromMVAE(nn.Module):
@@ -43,6 +44,11 @@ class SurvFromMVAE(nn.Module):
         self.mvae_net = mvae_net
         self.n_cat = len(kwargs['cat_names'])
 
+    def forward(self, x, **kwargs):
+        x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
+        x_cat = x_cat.long()
+        return self.mvae_net(x_cat, x_cont, **kwargs)
+
     def predict(self, x, **kwargs):
         x_cat, x_cont = x[:, :self.n_cat], x[:, self.n_cat:]
         x_cat = x_cat.long()
@@ -58,6 +64,33 @@ class SurvFromMVAE(nn.Module):
 
     def __repr__(self):
         return f"SurvFromMVAE ( {str(self.mvae_net)} )"
+
+
+class LossMVAELogHaz(nn.Module):
+    def __init__(self, alpha):
+        super().__init__()
+        assert (alpha >= 0) and (alpha <= 1), 'Need `alpha` in [0, 1].'
+        self.alpha = alpha
+        self.loss_surv = NLLLogistiHazardLoss()
+        self.loss_ae = nn.MSELoss()
+        self.lw = WeightByCall(n_batch=30000)
+
+    def forward(self, predicted, z_mu, z_var, others, x_ret, idx_durations, events):
+        # use only predicted and others in MultiDecoderVAE with train mode
+        phi, decoded = others[0], predicted
+
+        loss_surv = self.loss_surv(phi, idx_durations, events)
+        loss_ae = self.loss_ae(decoded, x_ret)
+        kl_loss = 0.5 * torch.sum(torch.exp(z_var) + z_mu ** 2 - 1.0 - z_var)
+
+        d_alpha = self.lw()
+        print('check d_alpha', d_alpha)
+
+        d_alpha = 1 - self.alpha
+        # ret = self.alpha * loss_surv + (1 - self.alpha) * (c_loss + kl_loss)
+        ret = (1 - d_alpha) * loss_surv + d_alpha * (loss_ae + kl_loss) / 2.0
+
+        return ret
 
 
 class SurvFromDNN(nn.Module):
@@ -274,6 +307,108 @@ class LabelTransform:
         return self.trans.transform(durations, events)
 
 
+def hazard_from_mvae_pipe(**config):
+    """
+    Training with MVAE with hazard.
+    Extend from https://github.com/havakv/pycox/blob/master/examples/03_network_architectures.ipynb
+    with our model
+    :param config:
+    :return:
+    """
+    df_train, df_val, df_test = config['train_df'], config['valid_df'], config['test_df']
+
+    cat_names = config['cat_names']
+
+    # TODO convert categories to number, fit on train and do same for val, test
+    # best way, make a new col with {name}_tfm and use new
+    cat_encoder = CategoricalEncoderPandas(cat_names=cat_names)
+    cat_encoder.fit_df(df=df_train)
+
+    # make new cols
+    def tran_col(df, col):
+        x = cat_encoder.transform(col, df[col])
+        x = np.array(x).reshape(-1)
+        df[f"{col}_tfm"] = x
+        return df
+
+    for col in cat_names:
+        df_train = tran_col(df_train, col)
+        df_val = tran_col(df_val, col)
+        df_test = tran_col(df_test, col)
+
+    cols_standardize = config['cont_names']
+    cols_leave = [f"{col}_tfm" for col in cat_names]  # using new columns
+    is_normalize_cont = config.get('is_normalize_cont', False)
+    standardize = [([col], StandardScaler() if is_normalize_cont else None) for col in cols_standardize]
+    leave = [(col, None) for col in cols_leave]
+
+    # NOTE: for mvae, cat should be before cont
+    x_mapper = DataFrameMapper(leave + standardize)
+
+    x_train = x_mapper.fit_transform(df_train).astype('float32')
+    x_val = x_mapper.transform(df_val).astype('float32')
+    x_test = x_mapper.transform(df_test).astype('float32')
+
+    # get_target = lambda df: (df['Survival.time'].values, df['Deadstatus.event'].values)
+    def get_target1(df):
+        df[df['Deadstatus.event'] == 9] = 0
+        return df['Survival.time'].values, df['Deadstatus.event'].values
+
+    labtrans = LogisticHazard.label_transform(config['num_durations'])
+    y_train = labtrans.fit_transform(*get_target1(df_train))
+    config['labtrans'] = labtrans
+
+    y_val = labtrans.transform(*get_target1(df_val))
+    durations_test, events_test = get_target1(df_test)
+    val = tt.tuplefy(x_val, y_val)
+
+    # TODO build net and model
+    config['model'] = convert_to_obj_or_fn(config['model'], **config)
+    config['loss_func'] = convert_to_obj_or_fn(config['loss_func'], **config)
+
+    net = SurvFromMVAE(mvae_net=config['model'], **config)
+    loss_func = LossMVAELogHaz(config.get('alpha', 0.5))
+    model = LogisticHazardE(
+        net=net,
+        optimizer=tt.optim.Adam(config.get('lr', 1e-2)),
+        duration_index=config['labtrans'].cuts,
+        loss=loss_func
+    )
+
+    # lrfinder = model.lr_finder(x_train, y_train, config['bs'], tolerance=2)
+    # _ = lrfinder.plot()
+    # lrfinder.get_best_lr()
+
+    metrics = dict(
+        loss_surv=LossMVAELogHaz(1),
+        loss_vae=LossMVAELogHaz(0)
+    )
+    callbacks = [tt.callbacks.EarlyStopping(), tt.callbacks.BestWeights(file_path=config['cp'] / 'bw.w')]
+    verbose = True
+
+    model.fit(x_train, y_train, config['bs'], config['epochs'], callbacks, verbose,
+              val_data=val.repeat(10).cat(), metrics=metrics)
+    res = model.log.to_pandas()
+    res.to_csv(config['cp'] / 'run.log')
+    print(res.head())
+
+    # _ = log.plot()
+    # model.partial_log_likelihood(*val).mean()
+    # _ = model.compute_baseline_hazards()
+
+    # surv = model.predict_surv_df(x_test)
+    surv = model.interpolate(10).predict_surv_df(x_test)
+    durations_test, events_test = durations_test.astype(np.int32), events_test.astype(np.int32)
+
+    config.update({
+        'surv': surv,
+        'durations_test': durations_test,
+        'events_test': events_test
+    })
+
+    return report_from_surv(**config)
+
+
 def cox_based_pipe(**config):
     """
     Training with CoxTime or CoxPh
@@ -309,24 +444,34 @@ def cox_based_pipe(**config):
         df[df['Deadstatus.event'] == 9] = 0
         return df['Survival.time'].values, df['Deadstatus.event'].values
 
-    y_train = labtrans.fit_transform(*get_target1(df_train))
-    y_val = labtrans.transform(*get_target1(df_val))
+    y_train = get_target1(df_train)
+    y_val = get_target1(df_val)
+
+    if config['model'] == 'CoxTime':
+        # only using labtrans if CoxTime
+        y_train = labtrans.fit_transform(*y_train)
+        y_val = labtrans.transform(*y_val)
     durations_test, events_test = get_target1(df_test)
     val = tt.tuplefy(x_val, y_val)
 
     # there are two model to get, CoxTime and CoxPH
+    in_features = x_train.shape[1]
+    out_features = config.get('out_features', 1)
     num_nodes = config.get('layers', [128, 128])
     batch_norm = config.get('batch_norm', False)
     dropout = config.get('dropout', 0.1)
+    output_bias = config.get('output_bias', False)
     if config['model'] == 'CoxTime':
-        in_features = x_train.shape[1]
         net = MLPVanillaCoxTime(in_features, num_nodes, batch_norm, dropout)
         model = CoxTime(net, tt.optim.Adam, labtrans=labtrans)
+
+    elif config['model'] == 'CoxCC':
+        net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
+                                      dropout, output_bias=output_bias)
+        model = CoxCC(net, tt.optim.Adam)
+
     else:
-        # now only support CoxPH here, maybe extend later
-        in_features = x_train.shape[1]
-        out_features = 1
-        output_bias = False
+        # CoxPH here
         net = tt.practical.MLPVanilla(in_features, num_nodes, out_features, batch_norm,
                                       dropout, output_bias=output_bias)
         model = CoxPH(net, tt.optim.Adam)
@@ -386,6 +531,32 @@ def make_label_transform_pipe(**config):
 
     config['labtrans_cuts'] = label_trans.trans.idu.cuts
     return config
+
+
+def surv_ppp_hazard_mvae(batch_tensor, **config):
+    """
+    Return raw (before sigmoid call)
+    :param batch_tensor:
+    :param config:
+    :return:
+    """
+    # print('test', batch_tensor[0])
+    # exit(0)
+
+    print('test batch tensor', batch_tensor[0].size())
+    print(batch_tensor)
+
+    ele = batch_tensor[0] if isinstance(batch_tensor, list) else batch_tensor
+    ele = ele.cpu().detach()
+    hazards = ele.numpy().tolist()
+
+    # for easy to use, separated n_hazard and survival time predict and named it
+    def fn(one):
+        return {'hazard': one, 'survival time': 1}
+
+    ret = [fn(one) for one in hazards]
+
+    return ret
 
 
 # surv post process for predict, see input form `prlab.torch.utils.default_post_process_fn`
