@@ -720,7 +720,9 @@ def report_from_logistic_hazard(**config):
     df_test = data_loader_to_df_mix(config['data_test'], **config)
 
     # custom header for our task, TODO fix hard code number of cat and cont
-    cols_leave = [f"cat_{i}" for i in range(5)] + [f"cont_{i}" for i in range(6)]
+    n_cat, n_cont = 5, 6  # old
+    n_cat, n_cont = len(config['cat_names']), len(config['cont_names'])
+    cols_leave = [f"cat_{i}" for i in range(n_cat)] + [f"cont_{i}" for i in range(n_cont)]
     cols_standardize = []
 
     standardize = [([col], StandardScaler()) for col in cols_standardize]
