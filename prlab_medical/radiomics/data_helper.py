@@ -2,7 +2,6 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from outside.medical_image_pre_aug import elastic_transform_3d
 from prlab.common.utils import convert_to_obj_or_fn, load_func_by_name
 from prlab.data_process.augmentation import rand_crop_near_center
 from prlab.torch.functions import TransformsWrapFn
@@ -56,6 +55,7 @@ def tfms_general_rad(**config):
     :param config:
     :return:
     """
+    from outside.medical_image_pre_aug import elastic_transform_3d
     to_tensor = lambda slices: torch.tensor(slices)
 
     tfms = [
