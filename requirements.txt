@@ -1,0 +1,10 @@
+git+https://github.com/thanhhungqb/prlab_utils.git@v2.0.0
+
+torchtuples>=0.2.0
+
+lifelines>=0.25.7
+pysurvival>=0.1.2
+pycox>=0.2.1
+scikit-survival>=0.14.0
+
+sklearn-pandas>=2.0.3
