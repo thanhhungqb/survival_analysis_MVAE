@@ -1,0 +1,268 @@
+{
+  "call": "prlab.common.dl.pipeline_control_multi",
+  "seed": 73,
+  "device": "cpu",
+  "proj_name": "nsclc-clinical-only-paper",
+  "run": "mvae-to-del",
+  "path": "/ws/data/cnuh-2020/meta",
+  "meta_df": "/ws/data/cnuh-2020/meta/summary-0813-test-fold.xlsx",
+  "model_path": "/ws/models/lung-cancer-cnuh",
+  "tfms": [],
+  "num_durations": 10,
+  "label_fn": [
+    "object",
+    "prlab_medical.data_loader.SurvivalHazardDiscreteRegFilterFn",
+    {
+      "note": "labtrans should prepare in pipe before make call, and fit_transform with train data"
+    }
+  ],
+  "predict_post_process_fn": "prlab_medical.surv.surv_ppp_merge_hazard_sm_st_fn2",
+  "cat_names": [
+    "Mcode",
+    "Mcode.description",
+    "Histology",
+    "Overall.stage",
+    "gender"
+  ],
+  "cont_names": [
+    "age",
+    "Clinical.T.Stage",
+    "Clinical.N.stage",
+    "Clinical.M.stage",
+    "Smoking.status",
+    "Smoking.amount"
+  ],
+  "y_names": [
+    "Survival.time",
+    "Deadstatus.event"
+  ],
+  "dataset_cls": "prlab_medical.data_loader.ClinicalDataset",
+  "model": [
+    "object",
+    "prlab.model.vae.MultiDecoderVAE",
+    {
+      "encoder": [
+        "object",
+        "prlab.model.vae.ExtendedEncoder",
+        {
+          "base_net": [
+            "object",
+            "prlab.fastai.wrap.TabularModelEx",
+            {
+              "out_sz": 128,
+              "layers": [
+                128,
+                128
+              ],
+              "is_only_output": false,
+              "note": "work with both continuous value and discrete, ret"
+            }
+          ],
+          "out_dim": 128,
+          "latent_dim": 128,
+          "note": "TODO fix, this is VAE encoder, and custom ...; second_out_size=sum(emb)+n_cont"
+        }
+      ],
+      "decoder": [
+        "object",
+        "prlab.model.vae.DNNDecoder",
+        {
+          "latent_dim": 128,
+          "hidden_dim": [
+            128,
+            128
+          ],
+          "is_relu": true,
+          "note": "TODO fix, this is decoder to VAE to reconstruct the original input, e.g. second_out_size"
+        }
+      ],
+      "second_decoder": [
+        [
+          "object",
+          "prlab.model.vae.DNNDecoder",
+          {
+            "latent_dim": 128,
+            "hidden_dim": [
+              128,
+              128
+            ],
+            "output_dim": 10,
+            "is_relu": true,
+            "note": "this is haz + ind reg [20], output_dim=num_durations"
+          }
+        ],
+        [
+          "object",
+          "prlab.model.vae.DNNDecoder",
+          {
+            "latent_dim": 128,
+            "hidden_dim": [
+              128,
+              128,
+              64
+            ],
+            "output_dim": 1,
+            "is_relu": true,
+            "note": "this is reg"
+          }
+        ]
+      ]
+    }
+  ],
+  "loss_func": [
+    "object",
+    "prlab.model.vae.MultiTaskVAELoss",
+    {
+      "loss": [
+        "object",
+        "prlab.torch.functions.MSELossE",
+        {}
+      ],
+      "second_loss": [
+        "prlab_medical.surv.LossAELogHaz",
+        "prlab_medical.surv.MSELossWithRightCensoring"
+      ],
+      "lw": [
+        [
+          "object",
+          "prlab.common.dl.WeightByCall",
+          {
+            "n_batch": 30000
+          }
+        ],
+        1,
+        1
+      ]
+    }
+  ],
+  "opt_func": [
+    "object",
+    "torch.optim.Adam",
+    {
+      "lr": 0.001,
+      "weight_decay": 0.0001
+    }
+  ],
+  "process_pipeline_1": [
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeRunCommands",
+      {
+        "cmd": [
+          "config['cuts'] = [365/2*i for i in range(config['num_durations'])]",
+          "xtmp = config['cuts'][-1] * 2 - config['cuts'][-2]",
+          "config['mid_values'] = list((np.array(config['cuts']) + np.array(config['cuts'][1:] + [xtmp])) / 2)"
+        ]
+      }
+    ],
+    "prlab.common.dl.general_dl_make_up",
+    "prlab.common.dl.make_train_loggers"
+  ],
+  "process_pipeline_4": [
+    "pipe 4 and 5 is for data loader and prepare",
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeRunCommands",
+      {
+        "cmd": [
+          "import pandas as pd",
+          "config['df'] = pd.read_excel(config['meta_df'],dtype=object)",
+          "config['df'].insert(3, 'pid', config['df']['PatientID'])",
+          "config['df'] = config['df'].set_index('pid', drop=False)"
+        ]
+      }
+    ]
+  ],
+  "process_pipeline_5": [
+    "prlab.common.utils.train_test_split_fold",
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeClassCallWrap",
+      {
+        "fn": "lambda **config: config['test_df'].to_csv(config['cp'] / 'test.csv')",
+        "note": "save train/test set to csv file to check (valid should be inference)"
+      }
+    ],
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeObjectMake",
+      {
+        "fn": [
+          "object",
+          "prlab.common.utils.CategoricalEncoderPandas",
+          {
+            "map_param_name": {
+              "df": "train_df"
+            }
+          }
+        ],
+        "ret_name": "cat_encoder",
+        "note": "make cat_encoder from train_df of train_test_split_fold, to pass to all train/valid/test"
+      }
+    ],
+    [
+      "object",
+      "prlab.common.utils.PipeRunCommands",
+      {
+        "cmd": [
+          "config['emb_szs'] = config.get('emb_szs', [[o,o//2] for o in config['cat_encoder'].get_size()])",
+          "config['n_cont'] = len(config['cont_names'])",
+          "config['output_dim'] = config['n_cont'] + np.sum([o for _,o in config['emb_szs']])"
+        ],
+        "note": "make emb_szs, if not given; calc n_cont from cont_names; calc output_dim, second_out_size=sum(emb)+n_cont"
+      }
+    ],
+    "prlab_medical.surv.make_label_transform_pipe",
+    "prlab_medical.radiomics.data_helper.patient_data_loader"
+  ],
+  "process_pipeline_10": [
+    "prlab.torch.pipeline.simple_model",
+    "prlab.torch.pipeline.model_general_setup"
+  ],
+  "process_pipeline_15": [
+    "prlab.torch.utils.train_control",
+    "prlab.torch.pipeline.model_load_weights"
+  ],
+  "process_pipeline_20": [
+    "prlab.torch.utils.predict_control",
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeClassCallWrap",
+      {
+        "fn": "lambda **config: config['out'].to_csv(config['cp']/'predict.csv', index=False)",
+        "note": "predict_control write to 'out' with dataframe"
+      }
+    ],
+    "prlab_medical.surv.report_survival_time",
+    "prlab_medical.surv.report_from_mvae",
+    [
+      "object_lazy",
+      "prlab.common.utils.PipeRunCommands",
+      {
+        "cmd": [
+          "out = config['out']",
+          "st = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}'.format(config['epochs'], config['filter_col_name'], out['MAE'], out['MSE'], str(out['default_mae_mse']), str(out['CI']), str(out['brier_score']), str(out['nbll']))",
+          "import wandb",
+          "st = '{}\t{}'.format(wandb.run.id, st)",
+          "(config['cp'].parent / 'a-reports.txt').open('a').write('{}\\n'.format(st))",
+          "wandb.save(str(config['cp'] / '*.pdf'))",
+          "wandb.save(str(config['cp'] / '*.w'))",
+          "wandb.save(str(config['cp'] / 'merge_gt_pred.csv'))"
+        ]
+      }
+    ],
+    "prlab.common.utils.write_config_json"
+  ],
+  "k": 5,
+  "valid_flag": 0.2,
+  "TTA": 30,
+  "filter_col_name": "x40",
+  "test_fold": 1,
+  "num_workers": 8,
+  "bs": 512,
+  "epochs": 200,
+  "lr": 0.001,
+  "log_level": "DEBUG",
+  "json_name": "configure-final.json",
+  "wandb": true
+}
